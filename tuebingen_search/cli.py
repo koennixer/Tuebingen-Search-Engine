@@ -18,6 +18,7 @@ from .presentation import (
     print_domain_facets,
     print_result_page,
     run_batch_file,
+    start_web_interface,
 )
 from .retrieval import retrieve
 from .storage import export_documents_jsonl, index_statistics
@@ -224,6 +225,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+
+    #run web interface
+    start_web_interface("127.0.0.1", 5000)
+
     """Run the command-line interface."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)

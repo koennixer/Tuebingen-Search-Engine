@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TüSearch</title>
+    <link rel="stylesheet" href="../static/style.css">
+</head>
+
+<body>
+
+<h1>Tübingen Search Machine</h1>
+
+<form method="POST">
+    <input
+        type="text"
+        name="query"
+        placeholder="Search..."
+        value="{{ query }}"
+        autofocus>
+
+    <button type="submit">Search</button>
+</form>
+
+<hr>
+
+{% if results %}
+<h2>Results</h2>
+
+{% for result in results %}
+<div class="result">
+    {{ result }}
+</div>
+{% endfor %}
+{% endif %}
+
+</body>
+</html>
