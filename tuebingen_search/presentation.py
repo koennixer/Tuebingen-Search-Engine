@@ -170,12 +170,11 @@ def index():
         query = request.form["query"]
 
         if query.strip():
-            results = retrieve(query, "../tuebingen_index.sqlite3", top_k=100) #FIXME index/top_k?
-            print(results)#FIXME no results/wrong format? (TODO write format function for html output)
+            results = retrieve(query, "tuebingen_index.sqlite3", top_k=100)
 
     return render_template(
         "index.html",
-        query=query,
+        query=query, 
         results=results
     )
 
