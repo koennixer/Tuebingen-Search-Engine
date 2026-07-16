@@ -90,6 +90,40 @@ def score_url_priority(url: str) -> float:
         score -= 10.0
     return score
 
+def extract_main_text(soup: BeautifulSoup, max_chars: int = 30_000) -> str:
+    # Candidate containers (prefer content)
+    candidates = []
+    for sel in ["main", "article", '[role="main"]', "body"]:
+        el = soup.select_one(sel)
+        if el is not None:
+            candidates.append(el)
+
+    # If main/article includes a lot of boilerplate, pick the largest container
+    if candidates:
+        main = max(candidates, key=lambda el: len(el.get_text(" ", strip=True)))
+    else:
+        main = soup
+
+    # Remove boilerplate inside the selected container
+    for el in main.select(
+        'nav, header, footer, aside, [role="navigation"], [role="contentinfo"], [aria-hidden="true"][aria-hidden="true"]'
+    ):
+        el.decompose()
+
+    # Cookie/consent banners (very common English/German noise)
+    for el in main.select('[id], [class]'):
+        if el is not None:
+            attrs = (el.get("id","") + " " + " ".join(el.get("class", []))).lower()
+            if any(k in attrs for k in ["cookie", "consent", "gdpr", "privacy"]):
+                el.decompose()
+
+    text = main.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+    return text[:max_chars]
+
+def is_bad_href(href: str) -> bool:
+    href = (href or "").strip().lower()
+    return href.startswith(("javascript:", "mailto:", "tel:"))
 
 def extract_document(url: str, html: str, content_type: str, status_code: int) -> tuple[Document, list[str], str | None]:
     """Extract title, body text, language hint, and outgoing links from HTML."""
@@ -100,21 +134,44 @@ def extract_document(url: str, html: str, content_type: str, status_code: int) -
     for tag in soup(["script", "style", "noscript", "template", "svg"]):
         tag.decompose()
 
-    title_tag = soup.find("title")
-    title = title_tag.get_text(" ", strip=True) if title_tag else ""
+    title = ""
+    og = soup.find("meta", property="og:title")
+    if og and og.get("content"):
+        title = og["content"].strip()
+    else:
+        title_tag = soup.find("title")
+        title = title_tag.get_text(" ", strip=True) if title_tag else ""
 
-    main = soup.find("main") or soup.body or soup
-    text = main.get_text(" ", strip=True)
-    text = re.sub(r"\s+", " ", text)
+    text = extract_main_text(soup)
 
     html_tag = soup.find("html")
     html_lang = html_tag.get("lang") if html_tag else None
 
-    links: list[str] = []
-    for anchor in soup.find_all("a", href=True):
-        target = canonicalize_url(anchor["href"], base_url=url)
-        if target:
-            links.append(target)
+    links_set: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if is_bad_href(href):
+            continue
+
+        target = canonicalize_url(href, base_url=url)
+        if not target:
+            continue
+
+        # canonicalize_url should ideally remove fragments and normalize queries
+        # still, this protects against fragment-only links:
+        parsed = urlparse(target)
+        if parsed.fragment:
+            continue
+
+        links_set.add(target)
+
+        if len(links_set) >= 50:   # hard cap per page
+            break
+    links = list(links_set)
+    #for anchor in soup.find_all("a", href=True):
+    #    target = canonicalize_url(anchor["href"], base_url=url)
+    #    if target:
+    #        links.append(target)
 
     return (
         Document(
@@ -355,23 +412,24 @@ def crawl(
                 politeness.mark_fetched(url)
 
                 doc, links, html_lang = extract_document(url, html, content_type, status_code)
+                # 1) check relevance
+                if not is_tuebingen_related(doc.url, doc.title, doc.text):
+                    mark_frontier(conn, url, "skipped", "not Tübingen-related")
+                    stats["skipped"] += 1
+                    continue
+                # 2) check language
+                if not is_probably_english(doc.text, html_lang=html_lang):
+                    mark_frontier(conn, url, "skipped", "not English")
+                    stats["skipped"] += 1
+                    continue
+                # 3) only enqueue links that passed relevance and language check
                 prioritized_links = sorted(set(links), key=score_url_priority, reverse=True)
                 stats["discovered"] += add_to_frontier(
                     conn,
                     prioritized_links[:max_links_per_page],
                     score_url_priority,
                 )
-
-                if not is_tuebingen_related(doc.url, doc.title, doc.text):
-                    mark_frontier(conn, url, "skipped", "not Tübingen-related")
-                    stats["skipped"] += 1
-                    continue
-
-                if not is_probably_english(doc.text, html_lang=html_lang):
-                    mark_frontier(conn, url, "skipped", "not English")
-                    stats["skipped"] += 1
-                    continue
-
+                # 4) index the page
                 add_document_to_connection(conn, doc)
                 mark_frontier(conn, url, "visited")
                 host = urlparse(url).netloc.lower()
@@ -380,6 +438,7 @@ def crawl(
                 stats["visited"] += 1
 
             except Exception as exc:
+                print(exc)
                 mark_frontier(conn, url, "error", str(exc)[:500])
                 stats["errors"] += 1
 

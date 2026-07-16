@@ -14,6 +14,8 @@ TUEBINGEN_TERMS = {
     "universitat tubingen",
     "university of tubingen",
     "uni tubingen",
+    "neckar",
+    "stocherkahn",
 }
 
 ENGLISH_STOPWORDS = {
@@ -58,17 +60,22 @@ def is_probably_english(text: str, html_lang: str | None = None) -> bool:
     if html_lang:
         lang = html_lang.strip().lower()
         if lang.startswith("en"):
-            return True
+            pass
+            #return True
         if lang.startswith("de"):
-            return False
+            pass
+            #return False
 
     words = tokenize(text[:20_000])
     if len(words) < 30:
-        return False
+        pass
+        #return False
 
     counts = Counter(words)
     english_score = sum(counts[w] for w in ENGLISH_STOPWORDS)
     german_score = sum(counts[normalize_for_matching(w)] for w in GERMAN_STOPWORDS)
+    print("english score: ", english_score)
+    print("german score; ", german_score)
     return english_score >= max(4, german_score * 1.7)
 
 
