@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import math
 import sqlite3
 from collections import Counter
@@ -349,8 +350,14 @@ def retrieve_batch(
     *,
     top_k: int = 100,
 ) -> dict[str, list[dict[str, int | float | str]]]:
-    """Run retrieval for every query in a batch file."""
-    return {
-        query_id: retrieve(text, index, top_k=top_k)
-        for query_id, text in load_query_file(query_file)
-    }
+    """Run retrieval for every query in a batch file in parallel."""
+    queries = load_query_file(query_file)
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(retrieve, text, index, top_k=top_k): query_id
+            for query_id, text in queries
+        }
+        return {
+            futures[fut]: fut.result()
+            for fut in as_completed(futures)
+        }
