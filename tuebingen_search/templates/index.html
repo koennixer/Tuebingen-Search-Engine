@@ -10,6 +10,8 @@
 <h1>Tübingen Search Machine</h1>
 
 <form method="POST">
+    <input type="hidden" name="type" value="query">
+    <input type="hidden" name="show_scores" value ="{{show}}">
     <input
         type="text"
         name="query"
@@ -23,10 +25,30 @@
 <hr>
 
 {% if results %}
-<h2>Results</h2>
+<div style="display: flex; align-items: center; gap: 10px;">
+    <h2 style="margin: 0;">Results</h2>
+    
+    <form style="margin:0;" method="POST">
+        <input type="hidden" name="type" value="scores">
+        <input type="hidden" name="show_scores" value ="{{not show}}">
+        <input type="hidden" name="query" value ="{{query}}">
+        <input type="hidden" name="result" value ="{{result}}">
+        <button type="submit">
+            {% if show %}
+                Hide Scores
+            {% else %}
+                Show Scores
+            {% endif %}
+        </button>
+    </form>
+</div>
+
 
 {% for result in results %}
 <a href={{result.url}}>{{result.title}}</a>
+{% if show %}
+<div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{expanded_score}}</div>
+{% endif %}
 <div>
     {{result.snippet}}
 </div>
