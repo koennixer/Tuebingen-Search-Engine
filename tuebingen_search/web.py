@@ -15,29 +15,20 @@ def index():
     #show = False
 
     if request.method == "POST":
-        if request.form["type"] == "query":
-            query = request.form["query"]
-            show = request.form["show_scores"]
+        query = request.form.get("query", "")
+        show = request.form.get("show_scores") == "True"
 
-            if query.strip():
-                results = retrieve(query, "tuebingen_index.sqlite3", top_k=100)
+        if query.strip():
+            results = retrieve(query, "tuebingen_index.sqlite3", top_k=100)
 
-            return render_template(
-                "index.html",
-                query=query, 
-                results=results,
-                show=show
-            )
-        if request.form["type"] == "scores":
-            show = request.form["show_scores"] == "True"
-            query = request.form["query"]
-            results = request.form["results"]
-            return render_template(
-                "index.html",
-                query=query, 
-                results=results,
-                show = show
-            )
+        return render_template(
+            "index.html",
+            query=query,
+            results=results,
+            show=show,
+        )
+
+    return render_template("index.html", query=query, results=results, show=False)
 
 
 def start_web_interface(host, port):

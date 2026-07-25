@@ -30,9 +30,8 @@
     
     <form style="margin:0;" method="POST">
         <input type="hidden" name="type" value="scores">
-        <input type="hidden" name="show_scores" value ="{{not show}}">
-        <input type="hidden" name="query" value ="{{query}}">
-        <input type="hidden" name="result" value ="{{result}}">
+        <input type="hidden" name="show_scores" value="{{not show}}">
+        <input type="hidden" name="query" value="{{query}}">
         <button type="submit">
             {% if show %}
                 Hide Scores
@@ -45,9 +44,9 @@
 
 
 {% for result in results %}
-<a href={{result.url}}>{{result.title}}</a>
+<a href="{{result.url}}">{{result.title}}</a>
 {% if show %}
-<div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{expanded_score}}</div>
+<div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
 {% endif %}
 <div>
     {{result.snippet}}
