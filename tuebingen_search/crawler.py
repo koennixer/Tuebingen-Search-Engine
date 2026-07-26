@@ -43,6 +43,8 @@ DEFAULT_MAX_LINKS_PER_PAGE = 80
 def canonicalize_url(url: str, base_url: str | None = None) -> str | None:
     """Normalize URLs so duplicates differ less often by fragments or tracking."""
     if base_url:
+        if not base_url.endswith("/") and "." not in base_url.rsplit("/", 1)[-1]:
+            base_url += "/"
         url = urljoin(base_url, url)
 
     url, _fragment = urldefrag(url)
@@ -112,7 +114,7 @@ def extract_main_text(soup: BeautifulSoup, max_chars: int = 30_000) -> str:
 
     # Cookie/consent banners (very common English/German noise)
     for el in main.select('[id], [class]'):
-        if el is not None:
+        if el is not None and getattr(el, "attrs", None) is not None:
             attrs = (el.get("id","") + " " + " ".join(el.get("class", []))).lower()
             if any(k in attrs for k in ["cookie", "consent", "gdpr", "privacy"]):
                 el.decompose()
@@ -214,7 +216,9 @@ class Politeness:
             parser.set_url(robots_url)
             try:
                 response = session.get(robots_url, timeout=REQUEST_TIMEOUT_SECONDS)
-                if response.status_code < 400:
+                if response.status_code in (401, 403):
+                    parser.parse(["User-agent: *", "Disallow: /"])
+                elif response.status_code < 400:
                     parser.parse(response.text.splitlines())
                 else:
                     parser.parse([])
@@ -365,6 +369,9 @@ def crawl(
     max_processed = max_processed or max(max_pages * 12, max_pages + 25)
     per_host_limit = per_host_limit or max(8, max_pages // 4)
     indexed_by_host: dict[str, int] = {}
+    for (doc_url,) in conn.execute("SELECT url FROM documents").fetchall():
+        host = urlparse(doc_url).netloc.lower()
+        indexed_by_host[host] = indexed_by_host.get(host, 0) + 1
 
     stats = {
         "indexed": 0,
@@ -438,7 +445,8 @@ def crawl(
                 stats["visited"] += 1
 
             except Exception as exc:
-                print(exc)
+                if progress_verbose:
+                    print(f"\n{exc}")
                 mark_frontier(conn, url, "error", str(exc)[:500])
                 stats["errors"] += 1
 
