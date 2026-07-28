@@ -14,7 +14,6 @@ from .models import SearchResult
 from .retrieval import retrieve, retrieve_batch
 from .text import query_terms, tokenize
 
-
 ResultLike = dict[str, int | float | str] | SearchResult
 
 
@@ -156,7 +155,6 @@ def explain_result(query: str, result: ResultLike) -> str:
             f"  URL:            {_result_value(result, 'url', '')}",
         ]
     )
-
 
 def interactive_search(index: str | Path, *, page_size: int = 10, top_k: int = 100) -> None:
     """Open the paged interactive search interface."""

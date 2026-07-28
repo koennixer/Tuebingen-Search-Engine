@@ -1,0 +1,28 @@
+body {
+    font-family: Arial, sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 20px;
+}
+
+input[type=text] {
+    width: 80%;
+    padding: 10px;
+    font-size: 18px;
+}
+
+button {
+    margin-left: auto;
+    padding: 10px 20px;
+    font-size: 18px;
+}
+
+.result {
+    margin-top: 15px;
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+h1 {
+    text-align: center;
+}

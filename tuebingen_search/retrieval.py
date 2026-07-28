@@ -352,14 +352,13 @@ def load_query_file(path: str | Path) -> list[tuple[str, str]]:
     return queries
 
 
-def retrieve_batch(
-    query_file: str | Path,
+def retrieve_batch_list(
+    queries: list[tuple[str, str]],
     index: str | Path,
     *,
     top_k: int = 100,
 ) -> dict[str, list[dict[str, int | float | str]]]:
-    """Run retrieval for every query in a batch file in parallel."""
-    queries = load_query_file(query_file)
+    """Run retrieval for a list of queries in parallel."""
     with ThreadPoolExecutor() as executor:
         futures = {
             executor.submit(retrieve, text, index, top_k=top_k): query_id
@@ -369,3 +368,13 @@ def retrieve_batch(
             futures[fut]: fut.result()
             for fut in as_completed(futures)
         }
+
+def retrieve_batch(
+    query_file: str | Path,
+    index: str | Path,
+    *,
+    top_k: int = 100,
+) -> dict[str, list[dict[str, int | float | str]]]:
+    """Run retrieval for every query in a batch file in parallel."""
+    queries = load_query_file(query_file)
+    return retrieve_batch_list(queries, index, top_k=top_k)

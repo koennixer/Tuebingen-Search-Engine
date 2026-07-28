@@ -19,6 +19,7 @@ from .presentation import (
     print_result_page,
     run_batch_file,
 )
+from .web import start_web_interface
 from .retrieval import retrieve
 from .storage import export_documents_jsonl, index_statistics
 
@@ -96,6 +97,8 @@ class SearchShell:
             self.query(" ".join(args))
         elif command == "ui":
             interactive_search(self.index)
+        elif command == "web":
+            self.web(args)
         else:
             self.query(line)
 
@@ -110,6 +113,7 @@ Commands
   <your query>                        search directly, e.g. tübingen attractions
   query <your query>                  same as typing the query directly
   ui                                  open the paged search interface
+  web                                 start the web search interface
   batch <queries.tsv> <results.tsv>   write assignment evaluation output
   stats                               show index statistics
   index <path.sqlite3>                switch/create the active index file
@@ -171,6 +175,14 @@ Examples
     def stats(self) -> None:
         print_index_statistics(self.index)
 
+    def web(self, args: list[str]) -> None:
+        try:
+            options = parse_shell_web_args(args)
+        except ValueError as exc:
+            print(exc)
+            return
+        start_web_interface(options.host, options.port)
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the top-level command parser."""
@@ -182,8 +194,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    web_parser = subparsers.add_parser("web", help="start the web search interface")
+    web_parser.add_argument("--host", default="127.0.0.1", help="host to bind to")
+    web_parser.add_argument("--port", type=int, default=5000, help="port to bind to")
+
     shell_parser = subparsers.add_parser("shell", help="open the friendly command shell")
     shell_parser.add_argument("index_override", nargs="?", help="optional SQLite index path")
+
 
     crawl_parser = subparsers.add_parser("crawl", help="crawl pages and update the local index")
     crawl_parser.add_argument("--index", default=argparse.SUPPRESS, help="SQLite index path")
@@ -237,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
         SearchShell(args.index).run()
         return 0
 
+    if args.command == "web":
+        start_web_interface(args.host, args.port)
+        return 0
+
     if args.command == "shell":
         SearchShell(args.index_override or args.index).run()
         return 0
@@ -287,6 +308,16 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def parse_shell_web_args(args: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="web", add_help=False)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5000)
+    try:
+        return parser.parse_args(args)
+    except SystemExit as exc:
+        raise ValueError("Use: web [--host IP] [--port PORT]") from exc
 
 
 def parse_shell_crawl_args(args: list[str]) -> argparse.Namespace:

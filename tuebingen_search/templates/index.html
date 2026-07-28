@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TüSearch</title>
+    <link rel="stylesheet" href="../static/style.css">
+</head>
+
+<body>
+
+<h1>Tübingen Search Machine</h1>
+
+<form method="POST" enctype="multipart/form-data">
+    <input type="hidden" name="type" value="query">
+    <input type="hidden" name="show_scores" value ="{{show}}">
+    <input
+        type="text"
+        name="query"
+        id="search_query"
+        placeholder="Search..."
+        value="{{ query }}"
+        autofocus>
+
+    <label for="batch_file" style="cursor:pointer; font-size:1.2em; padding: 0 5px;" title="Upload Batch Queries File">📎</label>
+    <input type="file" name="batch_file" id="batch_file" style="display:none;" accept=".tsv,.txt">
+
+    <button type="submit" id="search_button">Search</button>
+</form>
+
+<script>
+    document.getElementById('batch_file').addEventListener('change', function(e) {
+        if (e.target.files.length > 0) {
+            document.getElementById('search_query').placeholder = e.target.files[0].name + " selected";
+            document.getElementById('search_button').textContent = "Run Batch";
+        }
+    });
+</script>
+
+<hr>
+
+{% if results %}
+<div style="display: flex; align-items: center; gap: 10px;">
+    <h2 style="margin: 0;">Results</h2>
+    
+    <form style="margin:0;" method="POST">
+        <input type="hidden" name="type" value="scores">
+        <input type="hidden" name="show_scores" value="{{not show}}">
+        <input type="hidden" name="query" value="{{query}}">
+        <button type="submit">
+            {% if show %}
+                Hide Scores
+            {% else %}
+                Show Scores
+            {% endif %}
+        </button>
+    </form>
+</div>
+
+{% for result in results %}
+<a href="{{result.url}}">{{result.title}}</a>
+{% if show %}
+<div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
+{% endif %}
+<div style="margin-bottom: 10px;">
+    {{result.snippet}}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if batch_results %}
+<div style="display: flex; align-items: center; justify-content: space-between; margin-top: 15px; margin-bottom: 10px;">
+    <h2 style="margin: 0;">Batch Results</h2>
+    
+    <form method="POST" action="/download" style="margin: 0;">
+        <input type="hidden" name="tsv_data" value="{{ tsv_output }}">
+        <button type="submit">Download TSV</button>
+    </form>
+</div>
+
+<div>
+    {% for query_id, query_text in queries %}
+    {% set query_results = batch_results.get(query_id, []) %}
+    <details style="margin-bottom: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">Query: {{query_id}} - {{query_text}} ({{query_results|length}} results)</summary>
+        <div style="margin-top: 10px; margin-left: 15px;">
+            {% for result in query_results %}
+            <a href="{{result.url}}">{{result.title}}</a>
+            {% if show %}
+            <div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
+            {% endif %}
+            <div style="margin-bottom: 10px;">
+                {{result.snippet}}
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endfor %}
+</div>
+{% endif %}
+
+</body>
+</html>
