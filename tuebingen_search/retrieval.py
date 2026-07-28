@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import math
 import sqlite3
 from collections import Counter
+from itertools import batched
 from pathlib import Path
 from typing import Iterable
 
@@ -13,7 +14,7 @@ from .models import SearchResult
 from .storage import connect
 from .text import (
     ENGLISH_STOPWORDS,
-    GERMAN_STOPWORDS,
+    NORMALIZED_GERMAN_STOPWORDS,
     normalize_for_matching,
     query_terms,
     snippet,
@@ -54,15 +55,19 @@ def _document_frequencies(conn: sqlite3.Connection, terms: Iterable[str]) -> dic
     if not unique_terms:
         return {}
 
-    rows = conn.execute(
-        f"""
-        SELECT term, document_frequency
-        FROM terms
-        WHERE term IN ({_placeholders(unique_terms)})
-        """,
-        unique_terms,
-    ).fetchall()
-    return {term: int(df) for term, df in rows}
+    result = {}
+    for chunk in batched(unique_terms, 900):
+        rows = conn.execute(
+            f"""
+            SELECT term, document_frequency
+            FROM terms
+            WHERE term IN ({_placeholders(chunk)})
+            """,
+            chunk,
+        ).fetchall()
+        for term, df in rows:
+            result[term] = int(df)
+    return result
 
 
 def _bm25_idf(document_count: int, document_frequency: int) -> float:
@@ -90,26 +95,27 @@ def bm25_scores(
         return {}
 
     scores: Counter[int] = Counter()
-    rows = conn.execute(
-        f"""
-        SELECT p.term, p.doc_id, p.term_frequency, d.token_count
-        FROM postings p
-        JOIN documents d ON d.id = p.doc_id
-        WHERE p.term IN ({_placeholders(terms)})
-        """,
-        terms,
-    )
-
-    for term, doc_id, term_frequency, doc_len in rows:
-        df = dfs.get(term)
-        if not df:
-            continue
-        idf = _bm25_idf(document_count, df)
-        length_norm = 1.0 - BM25_B + BM25_B * (float(doc_len) / avg_doc_len)
-        tf_component = (term_frequency * (BM25_K1 + 1.0)) / (
-            term_frequency + BM25_K1 * length_norm
+    for chunk in batched(terms, 900):
+        rows = conn.execute(
+            f"""
+            SELECT p.term, p.doc_id, p.term_frequency, d.token_count
+            FROM postings p
+            JOIN documents d ON d.id = p.doc_id
+            WHERE p.term IN ({_placeholders(chunk)})
+            """,
+            chunk,
         )
-        scores[int(doc_id)] += weighted_terms[term] * idf * tf_component
+
+        for term, doc_id, term_frequency, doc_len in rows:
+            df = dfs.get(term)
+            if not df:
+                continue
+            idf = _bm25_idf(document_count, df)
+            length_norm = 1.0 - BM25_B + BM25_B * (float(doc_len) / avg_doc_len)
+            tf_component = (term_frequency * (BM25_K1 + 1.0)) / (
+                term_frequency + BM25_K1 * length_norm
+            )
+            scores[int(doc_id)] += weighted_terms[term] * idf * tf_component
 
     return dict(scores.most_common(limit))
 
@@ -127,30 +133,31 @@ def _rm3_expansion_weights(
         return {}
 
     document_count, _avg_doc_len = _collection_stats(conn)
-    stopwords = ENGLISH_STOPWORDS | {normalize_for_matching(w) for w in GERMAN_STOPWORDS}
+    stopwords = ENGLISH_STOPWORDS | NORMALIZED_GERMAN_STOPWORDS
     rank_weights = {
         doc_id: 1.0 / math.log(rank + 2.0)
         for rank, doc_id in enumerate(top_doc_ids, start=1)
     }
 
     term_scores: Counter[str] = Counter()
-    rows = conn.execute(
-        f"""
-        SELECT p.term, p.doc_id, p.term_frequency, d.token_count, t.document_frequency
-        FROM postings p
-        JOIN documents d ON d.id = p.doc_id
-        JOIN terms t ON t.term = p.term
-        WHERE p.doc_id IN ({_placeholders(top_doc_ids)})
-        """,
-        top_doc_ids,
-    )
+    for chunk in batched(top_doc_ids, 900):
+        rows = conn.execute(
+            f"""
+            SELECT p.term, p.doc_id, p.term_frequency, d.token_count, t.document_frequency
+            FROM postings p
+            JOIN documents d ON d.id = p.doc_id
+            JOIN terms t ON t.term = p.term
+            WHERE p.doc_id IN ({_placeholders(chunk)})
+            """,
+            chunk,
+        )
 
-    for term, doc_id, term_frequency, doc_len, document_frequency in rows:
-        if term in query_term_set or term in stopwords or len(term) < 3 or term.isdigit():
-            continue
-        idf = _bm25_idf(document_count, int(document_frequency))
-        normalized_tf = float(term_frequency) / max(float(doc_len), 1.0)
-        term_scores[term] += normalized_tf * idf * rank_weights[int(doc_id)]
+        for term, doc_id, term_frequency, doc_len, document_frequency in rows:
+            if term in query_term_set or term in stopwords or len(term) < 3 or term.isdigit():
+                continue
+            idf = _bm25_idf(document_count, int(document_frequency))
+            normalized_tf = float(term_frequency) / max(float(doc_len), 1.0)
+            term_scores[term] += normalized_tf * idf * rank_weights[int(doc_id)]
 
     if not term_scores:
         return {}
@@ -165,22 +172,23 @@ def _metadata_for_docs(conn: sqlite3.Connection, doc_ids: Iterable[int]) -> dict
     if not ids:
         return {}
 
-    rows = conn.execute(
-        f"""
-        SELECT id, url, title, text
-        FROM documents
-        WHERE id IN ({_placeholders(ids)})
-        """,
-        ids,
-    ).fetchall()
-    return {
-        int(doc_id): {
-            "url": url or "",
-            "title": title or "",
-            "text": text or "",
-        }
-        for doc_id, url, title, text in rows
-    }
+    result = {}
+    for chunk in batched(ids, 900):
+        rows = conn.execute(
+            f"""
+            SELECT id, url, title, text
+            FROM documents
+            WHERE id IN ({_placeholders(chunk)})
+            """,
+            chunk,
+        ).fetchall()
+        for doc_id, url, title, text in rows:
+            result[int(doc_id)] = {
+                "url": url or "",
+                "title": title or "",
+                "text": text or "",
+            }
+    return result
 
 
 def _metadata_boost(query: str, terms: list[str], metadata: dict[str, str]) -> float:

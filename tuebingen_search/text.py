@@ -14,19 +14,45 @@ TUEBINGEN_TERMS = {
     "universitat tubingen",
     "university of tubingen",
     "uni tubingen",
+    "neckar",
+    "stocherkahn",
 }
 
 ENGLISH_STOPWORDS = {
-    "the", "and", "of", "to", "in", "for", "with", "on", "at", "from",
-    "by", "as", "is", "are", "was", "were", "be", "this", "that", "it",
-    "you", "your", "we", "our", "about", "more", "can", "all", "not",
-    "or", "an", "a", "their", "has", "have",
+    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself", 
+    "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself", 
+    "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom", "this", "that", 
+    "these", "those", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", 
+    "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", 
+    "as", "until", "while", "of", "at", "by", "for", "with", "about", "against", "between", "into", 
+    "through", "during", "before", "after", "above", "below", "to", "from", "up", "down", "in", "out", 
+    "on", "off", "over", "under", "again", "further", "then", "once", "here", "there", "when", "where", 
+    "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "no", 
+    "nor", "not", "only", "own", "same", "so", "than", "too", "very", "s", "t", "can", "will", "just", 
+    "don", "should", "now"
 }
 
 GERMAN_STOPWORDS = {
-    "der", "die", "das", "und", "oder", "mit", "von", "für", "ist", "im",
-    "in", "den", "des", "dem", "ein", "eine", "auf", "zu", "zur", "zum",
-    "nicht", "auch", "sich", "als", "wir", "sie", "ihre",
+    "aber", "alle", "allem", "allen", "aller", "alles", "als", "also", "am", "an", "ander", "andere", 
+    "anderem", "anderen", "anderer", "anderes", "anderm", "andern", "anderr", "anders", "auch", "auf", 
+    "aus", "bei", "bin", "bis", "bist", "da", "damit", "dann", "der", "den", "des", "dem", "die", "das", 
+    "dass", "daß", "derselbe", "derselben", "denselben", "desselben", "demselben", "dieselbe", "dieselben", 
+    "dasselbe", "dazu", "dein", "deine", "deinem", "deinen", "deiner", "deines", "denn", "derer", "dessen", 
+    "dich", "dir", "du", "dies", "diese", "diesem", "diesen", "dieser", "dieses", "doch", "dort", "durch", 
+    "ein", "eine", "einem", "einen", "einer", "eines", "einig", "einige", "einigem", "einigen", "einiger", 
+    "einiges", "einmal", "er", "ihn", "ihm", "es", "etwas", "euer", "eure", "eurem", "euren", "eurer", 
+    "eures", "für", "gegen", "gewesen", "hab", "habe", "haben", "hat", "hatte", "hatten", "hier", "hin", 
+    "hinter", "ich", "mich", "mir", "ihr", "ihre", "ihrem", "ihren", "ihrer", "ihres", "euch", "im", "in", 
+    "indem", "ins", "ist", "jede", "jedem", "jeden", "jeder", "jedes", "jene", "jenem", "jenen", "jener", 
+    "jenes", "jetzt", "kann", "kein", "keine", "keinem", "keinen", "keiner", "keines", "können", "könnte", 
+    "machen", "man", "manche", "manchem", "manchen", "mancher", "manches", "mein", "meine", "meinem", 
+    "meinen", "meiner", "meines", "mit", "muss", "musste", "nach", "nicht", "nichts", "noch", "nun", "nur", 
+    "ob", "oder", "ohne", "sehr", "sein", "seine", "seinem", "seinen", "seiner", "seines", "selbst", "sich", 
+    "sie", "ihnen", "sind", "so", "solche", "solchem", "solchen", "solcher", "solches", "soll", "sollte", 
+    "sondern", "sonst", "über", "um", "und", "uns", "unsere", "unserem", "unseren", "unser", "unseres", 
+    "unter", "viel", "vom", "von", "vor", "während", "war", "waren", "warst", "was", "weg", "weil", "weiter", 
+    "welche", "welchem", "welchen", "welcher", "welches", "wenn", "werde", "werden", "wie", "wieder", "will", 
+    "wir", "wird", "wirst", "wo", "wollen", "wollte", "würde", "würden", "zu", "zum", "zur", "zwar", "zwischen"
 }
 
 TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
@@ -41,6 +67,9 @@ def normalize_for_matching(text: str) -> str:
     return text.replace("tuebingen", "tubingen")
 
 
+NORMALIZED_GERMAN_STOPWORDS = {normalize_for_matching(w) for w in GERMAN_STOPWORDS}
+
+
 def tokenize(text: str) -> list[str]:
     """Normalize text and split it into searchable tokens."""
     return TOKEN_RE.findall(normalize_for_matching(text))
@@ -49,8 +78,7 @@ def tokenize(text: str) -> list[str]:
 def query_terms(query: str) -> list[str]:
     """Tokenize a query and remove low-value stopwords."""
     terms = tokenize(query)
-    stopwords = ENGLISH_STOPWORDS | {normalize_for_matching(w) for w in GERMAN_STOPWORDS}
-    return [term for term in terms if len(term) > 1 and term not in stopwords]
+    return [term for term in terms if len(term) > 1]
 
 
 def is_probably_english(text: str, html_lang: str | None = None) -> bool:
@@ -68,7 +96,7 @@ def is_probably_english(text: str, html_lang: str | None = None) -> bool:
 
     counts = Counter(words)
     english_score = sum(counts[w] for w in ENGLISH_STOPWORDS)
-    german_score = sum(counts[normalize_for_matching(w)] for w in GERMAN_STOPWORDS)
+    german_score = sum(counts[w] for w in NORMALIZED_GERMAN_STOPWORDS)
     return english_score >= max(4, german_score * 1.7)
 
 
@@ -86,15 +114,29 @@ def snippet(text: str, terms: list[str], *, length: int = 260) -> str:
     sentences = re.split(r"(?<=[.!?])\s+", text)
     term_set = set(terms)
     for sentence in sentences:
-        if term_set & set(tokenize(sentence)):
-            return trim_snippet(sentence, length)
+        sentence_tokens = set(tokenize(sentence))
+        matched_terms = term_set & sentence_tokens
+        if matched_terms:
+            match_idx = sentence.lower().find(matched_terms.pop())
+            return trim_snippet(sentence, length, max(0, match_idx))
     return trim_snippet(text, length)
 
 
-def trim_snippet(text: str, length: int) -> str:
-    """Trim text on a word boundary for display."""
+def trim_snippet(text: str, length: int, match_index: int = 0) -> str:
+    """Trim text on a word boundary for display, centered around match_index."""
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) <= length:
         return text
-    trimmed = text[: length - 3].rsplit(" ", 1)[0]
-    return f"{trimmed}..."
+    
+    start = max(0, match_index - (length // 2))
+    end = start + length
+    if end > len(text):
+        end = len(text)
+        start = max(0, end - length)
+        
+    trimmed = text[start:end]
+    if start > 0:
+        trimmed = "..." + trimmed.split(" ", 1)[-1]
+    if end < len(text):
+        trimmed = trimmed.rsplit(" ", 1)[0] + "..."
+    return trimmed

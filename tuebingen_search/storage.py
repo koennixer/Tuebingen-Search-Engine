@@ -116,15 +116,14 @@ def add_document_to_connection(conn: sqlite3.Connection, doc: Document | dict) -
                 "SELECT term FROM postings WHERE doc_id = ?", (old_doc_id,)
             ).fetchall()
             conn.execute("DELETE FROM postings WHERE doc_id = ?", (old_doc_id,))
-            for (term,) in old_terms:
-                conn.execute(
-                    """
-                    UPDATE terms
-                    SET document_frequency = document_frequency - 1
-                    WHERE term = ?
-                    """,
-                    (term,),
-                )
+            conn.executemany(
+                """
+                UPDATE terms
+                SET document_frequency = document_frequency - 1
+                WHERE term = ?
+                """,
+                old_terms,
+            )
             conn.execute("DELETE FROM terms WHERE document_frequency <= 0")
             conn.execute("DELETE FROM documents WHERE id = ?", (old_doc_id,))
 
@@ -151,23 +150,22 @@ def add_document_to_connection(conn: sqlite3.Connection, doc: Document | dict) -
         )
         doc_id = int(cur.lastrowid)
 
-        for term, tf in term_counts.items():
-            conn.execute(
-                """
-                INSERT INTO terms(term, document_frequency)
-                VALUES (?, 1)
-                ON CONFLICT(term) DO UPDATE
-                SET document_frequency = document_frequency + 1
-                """,
-                (term,),
-            )
-            conn.execute(
-                """
-                INSERT INTO postings(term, doc_id, term_frequency)
-                VALUES (?, ?, ?)
-                """,
-                (term, doc_id, tf),
-            )
+        conn.executemany(
+            """
+            INSERT INTO terms(term, document_frequency)
+            VALUES (?, 1)
+            ON CONFLICT(term) DO UPDATE
+            SET document_frequency = document_frequency + 1
+            """,
+            [(term,) for term in term_counts.keys()],
+        )
+        conn.executemany(
+            """
+            INSERT INTO postings(term, doc_id, term_frequency)
+            VALUES (?, ?, ?)
+            """,
+            [(term, doc_id, tf) for term, tf in term_counts.items()],
+        )
     return doc_id
 
 
@@ -200,18 +198,19 @@ def next_frontier_url(
     excluded_hosts: set[str] | None = None,
 ) -> str | None:
     """Return the highest-priority queued URL, optionally avoiding hosts."""
-    rows = conn.execute(
+    cur = conn.execute(
         """
         SELECT url
         FROM frontier
         WHERE status = 'queued'
         ORDER BY priority DESC, discovered_at ASC
-        LIMIT 250
         """
-    ).fetchall()
+    )
     if not excluded_hosts:
-        return rows[0][0] if rows else None
-    for (url,) in rows:
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    for (url,) in cur:
         if urlparse(url).netloc.lower() not in excluded_hosts:
             return url
     return None

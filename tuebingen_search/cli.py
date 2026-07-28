@@ -24,20 +24,25 @@ from .storage import export_documents_jsonl, index_statistics
 
 
 DEFAULT_INDEX = "tuebingen_index.sqlite3"
+DEFAULT_MAX_PAGES = 50
 DEFAULT_SEEDS = [
     "https://www.tuebingen.de/en/",
-    "https://www.tuebingen-info.de/en/",
-    "https://www.tuebingen-info.de/en/attractions",
-    "https://www.tuebingen-info.de/en/restaurants",
-    "https://www.tuebingen-info.de/en/events",
-    "https://www.tuebingen.de/en/3521.html",
-    "https://www.tuebingen.de/en/3773.html",
-    "https://www.tuebingen.de/en/4456.html",
+    #"https://www.tuebingen-info.de/en/",
+    #"https://www.tuebingen-info.de/en/attractions",
+    #"https://www.tuebingen-info.de/en/restaurants",
+    #"https://www.tuebingen-info.de/en/events",
+    #"https://www.tuebingen.de/en/3521.html",
+    #"https://www.tuebingen.de/en/3773.html",
+    #"https://www.tuebingen.de/en/4456.html",
     "https://www.unimuseum.uni-tuebingen.de/en/museum-at-hohentuebingen-castle",
     "https://www.komoot.com/guide/355570/castles-in-tuebingen-district",
     "https://www.outdooractive.com/en/routes/tuebingen/routes-in-tuebingen/1442519/",
     "https://www.tripadvisor.com/Tourism-g198539-Tubingen_Baden_Wurttemberg-Vacations.html",
-    "https://uni-tuebingen.de/en/",
+    #"https://uni-tuebingen.de/en/",
+    "https://www.germany.travel/en/",
+    "https://uni-tuebingen.de/en/international/study-in-tuebingen/erasmus-and-exchange-to-tuebingen/",
+    "https://www.visit-bw.com/en/",
+    "https://www.mygermanyvacation.com/best-things-to-do-and-see-in-tubingen-germany/",
 ]
 
 
@@ -183,7 +188,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     crawl_parser = subparsers.add_parser("crawl", help="crawl pages and update the local index")
     crawl_parser.add_argument("--index", default=argparse.SUPPRESS, help="SQLite index path")
     crawl_parser.add_argument("seeds", nargs="*", help="seed URLs")
-    crawl_parser.add_argument("--max-pages", type=int, default=50)
+    crawl_parser.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES)
     crawl_parser.add_argument("--delay", type=float, default=DEFAULT_CRAWL_DELAY_SECONDS)
     crawl_parser.add_argument("--max-processed", type=int)
     crawl_parser.add_argument("--per-host-limit", type=int)
@@ -290,7 +295,7 @@ def parse_shell_crawl_args(args: list[str]) -> argparse.Namespace:
     The shell accepts a shorthand first positional integer for max pages:
     `crawl 500 --verbose` is equivalent to `crawl --max-pages 500 --verbose`.
     """
-    max_pages = 250
+    max_pages = DEFAULT_MAX_PAGES
     remaining = list(args)
     if remaining:
         try:
@@ -318,11 +323,12 @@ def parse_shell_crawl_args(args: list[str]) -> argparse.Namespace:
     return options
 
 
-def normalize_crawl_targets(default_max_pages: int, seeds: list[str]) -> tuple[int, list[str]]:
-    """Treat a leading numeric crawl argument as the target page count."""
+def normalize_crawl_targets(current_max_pages: int, seeds: list[str]) -> tuple[int, list[str]]:
+    """Treat a leading numeric crawl argument as the target page count, if not explicitly set."""
     if seeds and seeds[0].isdigit():
-        return int(seeds[0]), seeds[1:]
-    return default_max_pages, seeds
+        if current_max_pages == DEFAULT_MAX_PAGES:
+            return int(seeds[0]), seeds[1:]
+    return current_max_pages, seeds
 
 
 def print_crawl_summary(summary: dict[str, int]) -> None:
