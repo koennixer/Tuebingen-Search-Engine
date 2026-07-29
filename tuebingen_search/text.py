@@ -6,6 +6,16 @@ import re
 import unicodedata
 from collections import Counter
 
+try:
+    from langdetect import DetectorFactory, LangDetectException, detect
+except ImportError:  # The stop-word fallback keeps the core project usable.
+    DetectorFactory = None
+    LangDetectException = Exception
+    detect = None
+
+if DetectorFactory is not None:
+    DetectorFactory.seed = 0
+
 
 TUEBINGEN_TERMS = {
     "tubingen",
@@ -14,8 +24,12 @@ TUEBINGEN_TERMS = {
     "universitat tubingen",
     "university of tubingen",
     "uni tubingen",
-    "neckar",
     "stocherkahn",
+    "hohentubingen",
+    "72070",
+    "72072",
+    "72074",
+    "72076",
 }
 
 ENGLISH_STOPWORDS = {
@@ -70,40 +84,91 @@ def normalize_for_matching(text: str) -> str:
 NORMALIZED_GERMAN_STOPWORDS = {normalize_for_matching(w) for w in GERMAN_STOPWORDS}
 
 
+def _singularize(token: str) -> str:
+    """Apply conservative plural conflation without an NLP dependency."""
+    if len(token) > 5 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes")):
+        return token[:-2]
+    if (
+        len(token) > 4
+        and token.endswith("s")
+        and not token.endswith(("ss", "us", "is"))
+    ):
+        return token[:-1]
+    return token
+
+
 def tokenize(text: str) -> list[str]:
-    """Normalize text and split it into searchable tokens."""
-    return TOKEN_RE.findall(normalize_for_matching(text))
+    """Normalize text, split it into terms, and conflate simple plurals."""
+    return [_singularize(token) for token in TOKEN_RE.findall(normalize_for_matching(text))]
 
 
 def query_terms(query: str) -> list[str]:
     """Tokenize a query and remove low-value stopwords."""
     terms = tokenize(query)
-    return [term for term in terms if len(term) > 1]
+    stopwords = ENGLISH_STOPWORDS | NORMALIZED_GERMAN_STOPWORDS
+    return [term for term in terms if len(term) > 1 and term not in stopwords]
 
 
-def is_probably_english(text: str, html_lang: str | None = None) -> bool:
-    """Lightweight English-language filter for crawled pages."""
-    if html_lang:
-        lang = html_lang.strip().lower()
-        if lang.startswith("en"):
-            return True
-        if lang.startswith("de"):
-            return False
+def detect_language(text: str, html_lang: str | None = None) -> tuple[str, float]:
+    """Combine declared language, statistical detection, and a deterministic fallback."""
+    declared = (html_lang or "").strip().lower().split("-", 1)[0]
+    sample = text[:20_000]
+    detected = "unknown"
+    if detect is not None and len(sample) >= 80:
+        try:
+            detected = detect(sample)
+        except LangDetectException:
+            pass
 
-    words = tokenize(text[:20_000])
+    if declared == "en" and (detected == "en" or len(sample) < 300):
+        return "en", 0.98
+    if detected == "en":
+        return "en", 0.90
+    if declared == "en":
+        return "en", 0.72
+    if declared == "de" or detected == "de":
+        return "de", 0.90
+
+    words = tokenize(sample)
     if len(words) < 30:
-        return False
-
+        return detected, 0.40
     counts = Counter(words)
     english_score = sum(counts[w] for w in ENGLISH_STOPWORDS)
     german_score = sum(counts[w] for w in NORMALIZED_GERMAN_STOPWORDS)
-    return english_score >= max(4, german_score * 1.7)
+    if english_score >= max(4, german_score * 1.7):
+        return "en", 0.70
+    if german_score >= max(4, english_score * 1.4):
+        return "de", 0.70
+    return detected, 0.50
+
+
+def is_probably_english(text: str, html_lang: str | None = None) -> bool:
+    """Return whether a page has enough evidence to be indexed as English."""
+    language, confidence = detect_language(text, html_lang)
+    return language == "en" and confidence >= 0.70
+
+
+def tuebingen_relevance_score(url: str, title: str, text: str) -> float:
+    """Score explicit Tübingen evidence while resisting single footer mentions."""
+    normalized_terms = {normalize_for_matching(term) for term in TUEBINGEN_TERMS}
+    normalized_url = normalize_for_matching(url)
+    normalized_title = normalize_for_matching(title)
+    normalized_text = normalize_for_matching(text[:30_000])
+    score = 0.0
+    for term in normalized_terms:
+        if term in normalized_url:
+            score += 4.0
+        if term in normalized_title:
+            score += 3.0
+        score += min(normalized_text.count(term), 3) * 1.0
+    return score
 
 
 def is_tuebingen_related(url: str, title: str, text: str) -> bool:
-    """Check whether a page is plausibly related to Tübingen."""
-    haystack = normalize_for_matching(" ".join([url, title, text[:30_000]]))
-    return any(normalize_for_matching(term) in haystack for term in TUEBINGEN_TERMS)
+    """Require strong Tübingen evidence in the URL, title, or main text."""
+    return tuebingen_relevance_score(url, title, text) >= 2.0
 
 
 def snippet(text: str, terms: list[str], *, length: int = 260) -> str:
