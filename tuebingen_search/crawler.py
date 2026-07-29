@@ -1,4 +1,9 @@
-"""Polite, restartable crawler for English pages related to Tübingen."""
+"""Polite, restartable crawler for English pages related to Tübingen.
+
+Traversal and indexing are deliberately separate decisions: a German page may
+be followed as a short bridge to an English page, but only relevant English
+documents are stored in the searchable index.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +11,10 @@ import re
 import shutil
 import sys
 import time
+from dataclasses import dataclass, replace
+from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urldefrag, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 from .models import Document
@@ -17,10 +24,13 @@ from .storage import (
     connect,
     frontier_counts,
     mark_frontier,
-    next_frontier_url,
+    next_frontier_item,
+    recompute_pagerank,
+    record_links,
+    requeue_retryable_errors,
     utc_now,
 )
-from .text import is_probably_english, is_tuebingen_related, normalize_for_matching
+from .text import detect_language, is_tuebingen_related, normalize_for_matching
 
 try:
     import requests
@@ -33,147 +43,310 @@ except ImportError:
     BeautifulSoup = None
 
 
-USER_AGENT = "INFO4271-TuebingenSearchBot/1.0 (+student project)"
-REQUEST_TIMEOUT_SECONDS = 8
-MAX_HTML_BYTES = 1_500_000
-DEFAULT_CRAWL_DELAY_SECONDS = 0.5
-DEFAULT_MAX_LINKS_PER_PAGE = 80
+USER_AGENT = "INFO4271-TuebingenSearchBot/2.0 (+student research project)"
+REQUEST_TIMEOUT_SECONDS = 15
+MAX_HTML_BYTES = 2_000_000
+DEFAULT_CRAWL_DELAY_SECONDS = 1.0
+DEFAULT_MAX_LINKS_PER_PAGE = 100
+DEFAULT_BRIDGE_DEPTH = 2
+DEFAULT_MAX_DEPTH = 6
+DEFAULT_OFF_TOPIC_FOLLOW_DEPTH = 1
+DEFAULT_MAX_EXTERNAL_DOMAINS = 100
+DEFAULT_MIN_TEXT_CHARS = 180
+DEFAULT_MAX_RETRIES = 3
+
+SKIP_EXTENSIONS = {
+    ".7z", ".avi", ".css", ".doc", ".docx", ".gif", ".gz", ".ico", ".jpeg",
+    ".jpg", ".js", ".json", ".mov", ".mp3", ".mp4", ".pdf", ".png", ".ppt",
+    ".pptx", ".rar", ".rss", ".svg", ".tar", ".webp", ".xls", ".xlsx", ".xml",
+    ".zip",
+}
+TRACKING_PARAMETERS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+ENGLISH_LINK_HINT = re.compile(r"(^|[/_.?&=-])(en|eng|english)([/_.?&=-]|$)", re.I)
+BLOCKED_DISCOVERY_HOSTS = {
+    "facebook.com", "instagram.com", "linkedin.com", "pinterest.com",
+    "tiktok.com", "x.com", "twitter.com", "youtube.com",
+}
+
+
+@dataclass(frozen=True)
+class ExtractedLink:
+    url: str
+    anchor: str
+    language_hint: str
+
+
+class FetchError(RuntimeError):
+    """A fetch failure carrying retry and HTTP diagnostics."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        http_status: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.http_status = http_status
+
+
+class _FallbackHTMLParser(HTMLParser):
+    """Small dependency-free extractor used when Beautiful Soup is absent."""
+
+    ignored_tags = {
+        "script",
+        "style",
+        "noscript",
+        "template",
+        "svg",
+        "nav",
+        "header",
+        "footer",
+        "aside",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.stack: list[tuple[str, bool]] = []
+        self.ignored_depth = 0
+        self.in_title = False
+        self.title_parts: list[str] = []
+        self.text_parts: list[str] = []
+        self.html_lang: str | None = None
+        self.description = ""
+        self.canonical = ""
+        self.links: list[tuple[str, str, str]] = []
+        self.anchor_href = ""
+        self.anchor_hreflang = ""
+        self.anchor_parts: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        attributes = {key.lower(): value or "" for key, value in attrs}
+        ignored = tag in self.ignored_tags
+        self.stack.append((tag, ignored))
+        if ignored:
+            self.ignored_depth += 1
+        if tag == "html":
+            self.html_lang = attributes.get("lang") or None
+        elif tag == "title":
+            self.in_title = True
+        elif tag == "meta":
+            name = attributes.get("name", "").lower()
+            prop = attributes.get("property", "").lower()
+            if name == "description" or prop == "og:description":
+                self.description = attributes.get("content", "")[:1_000]
+            elif prop == "og:title" and attributes.get("content"):
+                self.title_parts = [attributes["content"]]
+        elif tag == "link" and "canonical" in attributes.get("rel", "").lower():
+            self.canonical = attributes.get("href", "")
+        elif tag == "a":
+            self.anchor_href = attributes.get("href", "")
+            self.anchor_hreflang = attributes.get("hreflang", "")
+            self.anchor_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self.in_title = False
+        elif tag == "a" and self.anchor_href:
+            self.links.append(
+                (
+                    self.anchor_href,
+                    " ".join(self.anchor_parts).strip(),
+                    self.anchor_hreflang,
+                )
+            )
+            self.anchor_href = ""
+            self.anchor_hreflang = ""
+            self.anchor_parts = []
+        for index in range(len(self.stack) - 1, -1, -1):
+            open_tag, ignored = self.stack[index]
+            if open_tag == tag:
+                del self.stack[index:]
+                if ignored:
+                    self.ignored_depth = max(0, self.ignored_depth - 1)
+                break
+
+    def handle_data(self, data: str) -> None:
+        cleaned = re.sub(r"\s+", " ", data).strip()
+        if not cleaned:
+            return
+        if self.in_title:
+            self.title_parts.append(cleaned)
+        if self.anchor_href:
+            self.anchor_parts.append(cleaned)
+        if self.ignored_depth == 0 and not self.in_title:
+            self.text_parts.append(cleaned)
+
+
+def _extract_document_without_bs4(
+    url: str, html: str, content_type: str, status_code: int
+) -> tuple[Document, list[ExtractedLink], str | None]:
+    parser = _FallbackHTMLParser()
+    parser.feed(html)
+    links: dict[str, ExtractedLink] = {}
+    for raw_url, anchor, hreflang in parser.links:
+        target = canonicalize_url(raw_url, base_url=url)
+        if not target:
+            continue
+        language_hint = hreflang.lower().split("-", 1)[0]
+        links.setdefault(
+            target,
+            ExtractedLink(target, anchor[:250], language_hint),
+        )
+    canonical_url = (
+        canonicalize_url(parser.canonical, base_url=url)
+        if parser.canonical
+        else url
+    ) or url
+    text = re.sub(r"\s+", " ", " ".join(parser.text_parts)).strip()[:40_000]
+    return (
+        Document(
+            url=url,
+            title=" ".join(parser.title_parts).strip(),
+            text=text,
+            html=html,
+            fetched_at=utc_now(),
+            content_type=content_type,
+            status_code=status_code,
+            canonical_url=canonical_url,
+            description=parser.description,
+        ),
+        list(links.values()),
+        parser.html_lang,
+    )
 
 
 def canonicalize_url(url: str, base_url: str | None = None) -> str | None:
-    """Normalize URLs so duplicates differ less often by fragments or tracking."""
+    """Resolve and normalize an HTTP URL while removing tracking noise."""
     if base_url:
-        if not base_url.endswith("/") and "." not in base_url.rsplit("/", 1)[-1]:
-            base_url += "/"
         url = urljoin(base_url, url)
-
-    url, _fragment = urldefrag(url)
-    parsed = urlparse(url)
-
-    if parsed.scheme not in {"http", "https"}:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
         return None
-    if not parsed.netloc:
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.hostname:
         return None
-
-    netloc = parsed.netloc.lower()
-    if (parsed.scheme == "http" and netloc.endswith(":80")) or (
-        parsed.scheme == "https" and netloc.endswith(":443")
+    host = parsed.hostname.lower().rstrip(".")
+    netloc = host
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
     ):
-        netloc = netloc.rsplit(":", 1)[0]
-
-    path = parsed.path or "/"
+        netloc = f"{host}:{port}"
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
     if path != "/" and path.endswith("/"):
         path = path[:-1]
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+        and key.lower() not in TRACKING_PARAMETERS
+    ]
+    suffix = Path(path).suffix.lower()
+    if suffix in SKIP_EXTENSIONS:
+        return None
+    return urlunsplit((scheme, netloc, path, urlencode(sorted(query)), ""))
 
-    ignored_query_prefixes = ("utm_", "fbclid", "gclid", "mc_cid", "mc_eid")
-    query_parts = []
-    for part in parsed.query.split("&"):
-        if not part:
-            continue
-        key = part.split("=", 1)[0].lower()
-        if not any(key.startswith(prefix) for prefix in ignored_query_prefixes):
-            query_parts.append(part)
 
-    return urlunparse((parsed.scheme, netloc, path, "", "&".join(query_parts), ""))
+def _host(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower()
+
+
+def _is_host_or_subdomain(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
 
 
 def score_url_priority(url: str) -> float:
-    """Prioritize URLs that look likely to contain useful English Tübingen pages."""
-    parsed = urlparse(url)
+    """Prioritize likely English Tübingen pages and penalize crawl traps."""
     normalized = normalize_for_matching(url)
     score = 0.0
     if "tubingen" in normalized:
         score += 5.0
-    if "/en" in normalized or "lang=en" in normalized:
-        score += 2.0
-    if parsed.netloc.endswith(".de"):
-        score += 0.5
-    if any(url.lower().endswith(ext) for ext in (".pdf", ".jpg", ".png", ".zip", ".mp4", ".docx")):
-        score -= 10.0
+    if ENGLISH_LINK_HINT.search(url):
+        score += 3.0
+    if any(token in normalized for token in ("restaurant", "hotel", "museum", "visit")):
+        score += 1.0
+    if len(urlsplit(url).query) > 120:
+        score -= 2.0
+    if any(token in normalized for token in ("calendar", "login", "share=", "replytocom")):
+        score -= 3.0
     return score
 
-def extract_main_text(soup: BeautifulSoup, max_chars: int = 30_000) -> str:
-    # Candidate containers (prefer content)
-    candidates = []
-    for sel in ["main", "article", '[role="main"]', "body"]:
-        el = soup.select_one(sel)
-        if el is not None:
-            candidates.append(el)
 
-    # If main/article includes a lot of boilerplate, pick the largest container
-    if candidates:
-        main = max(candidates, key=lambda el: len(el.get_text(" ", strip=True)))
-    else:
-        main = soup
-
-    # Remove boilerplate inside the selected container
-    for el in main.select(
-        'nav, header, footer, aside, [role="navigation"], [role="contentinfo"], [aria-hidden="true"][aria-hidden="true"]'
+def extract_main_text(soup: BeautifulSoup, max_chars: int = 40_000) -> str:
+    """Extract useful page text while dropping navigation and consent noise."""
+    root = (
+        soup.select_one("main")
+        or soup.select_one("article")
+        or soup.select_one('[role="main"]')
+        or soup.body
+        or soup
+    )
+    for element in root.select(
+        "script, style, noscript, template, svg, nav, header, footer, aside, "
+        '[role="navigation"], [role="contentinfo"], [aria-hidden="true"]'
     ):
-        el.decompose()
+        element.decompose()
+    for element in list(root.select("[id], [class]")):
+        attrs = (
+            str(element.get("id", "")) + " " + " ".join(element.get("class", []))
+        ).lower()
+        if any(word in attrs for word in ("cookie", "consent", "gdpr")):
+            element.decompose()
+    return re.sub(r"\s+", " ", root.get_text(" ", strip=True)).strip()[:max_chars]
 
-    # Cookie/consent banners (very common English/German noise)
-    for el in main.select('[id], [class]'):
-        if el is not None and getattr(el, "attrs", None) is not None:
-            attrs = (el.get("id","") + " " + " ".join(el.get("class", []))).lower()
-            if any(k in attrs for k in ["cookie", "consent", "gdpr", "privacy"]):
-                el.decompose()
 
-    text = main.get_text(" ", strip=True)
-    text = re.sub(r"\s+", " ", text)
-    return text[:max_chars]
-
-def is_bad_href(href: str) -> bool:
-    href = (href or "").strip().lower()
-    return href.startswith(("javascript:", "mailto:", "tel:"))
-
-def extract_document(url: str, html: str, content_type: str, status_code: int) -> tuple[Document, list[str], str | None]:
-    """Extract title, body text, language hint, and outgoing links from HTML."""
+def extract_document(
+    url: str, html: str, content_type: str, status_code: int
+) -> tuple[Document, list[ExtractedLink], str | None]:
+    """Extract a document, language metadata, and annotated outgoing links."""
     if BeautifulSoup is None:
-        raise RuntimeError("Install beautifulsoup4 to parse crawled HTML: pip install beautifulsoup4")
-
+        return _extract_document_without_bs4(
+            url, html, content_type, status_code
+        )
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "template", "svg"]):
-        tag.decompose()
-
-    title = ""
-    og = soup.find("meta", property="og:title")
-    if og and og.get("content"):
-        title = og["content"].strip()
-    else:
-        title_tag = soup.find("title")
-        title = title_tag.get_text(" ", strip=True) if title_tag else ""
-
+    title_tag = soup.find("meta", property="og:title")
+    title = (
+        title_tag.get("content", "").strip()
+        if title_tag
+        else (soup.title.get_text(" ", strip=True) if soup.title else "")
+    )
+    description_tag = (
+        soup.select_one('meta[name="description"]')
+        or soup.select_one('meta[property="og:description"]')
+    )
+    description = (
+        description_tag.get("content", "").strip()[:1_000]
+        if description_tag
+        else ""
+    )
+    canonical_tag = soup.select_one('link[rel~="canonical"][href]')
+    canonical_url = (
+        canonicalize_url(canonical_tag.get("href", ""), base_url=url)
+        if canonical_tag
+        else url
+    ) or url
     text = extract_main_text(soup)
-
     html_tag = soup.find("html")
     html_lang = html_tag.get("lang") if html_tag else None
 
-    links_set: set[str] = set()
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if is_bad_href(href):
+    links: dict[str, ExtractedLink] = {}
+    for anchor in soup.select("a[href]"):
+        raw = anchor.get("href", "").strip()
+        if not raw or raw.lower().startswith(
+            ("javascript:", "mailto:", "tel:", "data:", "#")
+        ):
             continue
-
-        target = canonicalize_url(href, base_url=url)
+        target = canonicalize_url(raw, base_url=url)
         if not target:
             continue
-
-        # canonicalize_url should ideally remove fragments and normalize queries
-        # still, this protects against fragment-only links:
-        parsed = urlparse(target)
-        if parsed.fragment:
-            continue
-
-        links_set.add(target)
-
-        if len(links_set) >= 50:   # hard cap per page
-            break
-    links = list(links_set)
-    #for anchor in soup.find_all("a", href=True):
-    #    target = canonicalize_url(anchor["href"], base_url=url)
-    #    if target:
-    #        links.append(target)
+        label = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))[:250]
+        hreflang = (anchor.get("hreflang") or "").lower().split("-", 1)[0]
+        links.setdefault(target, ExtractedLink(target, label, hreflang))
 
     return (
         Document(
@@ -184,163 +357,202 @@ def extract_document(url: str, html: str, content_type: str, status_code: int) -
             fetched_at=utc_now(),
             content_type=content_type,
             status_code=status_code,
+            canonical_url=canonical_url,
+            description=description,
         ),
-        links,
+        list(links.values()),
         html_lang,
     )
 
 
-class Politeness:
-    """Apply robots.txt checks and a per-host crawl delay."""
+class CrawlScope:
+    """Bound discovery while permitting links from seed sites to local businesses."""
 
-    def __init__(self, delay_seconds: float = DEFAULT_CRAWL_DELAY_SECONDS) -> None:
-        self.delay_seconds = delay_seconds
+    def __init__(
+        self,
+        seeds: list[str],
+        *,
+        allow_external: bool,
+        max_external_domains: int,
+    ) -> None:
+        self.seed_hosts = {_host(url) for url in seeds}
+        self.allow_external = allow_external
+        self.max_external_domains = max_external_domains
+        self.admitted_hosts: set[str] = set()
+
+    def contains(self, host: str) -> bool:
+        return any(
+            _is_host_or_subdomain(host, domain)
+            for domain in self.seed_hosts | self.admitted_hosts
+        )
+
+    def admit_link(
+        self,
+        link: ExtractedLink,
+        *,
+        source_relevant: bool,
+        source_depth: int,
+    ) -> bool:
+        host = _host(link.url)
+        if not host:
+            return False
+        if self.contains(host):
+            return True
+        if (
+            not self.allow_external
+            or not source_relevant
+            or source_depth > 2
+            or len(self.admitted_hosts) >= self.max_external_domains
+            or any(_is_host_or_subdomain(host, blocked) for blocked in BLOCKED_DISCOVERY_HOSTS)
+        ):
+            return False
+        # Links directly from a relevant seed/aggregator page are allowed as
+        # candidate business sites. Their pages must still pass language and
+        # Tübingen relevance checks before indexing.
+        self.admitted_hosts.add(host)
+        return True
+
+
+class Politeness:
+    """Apply robots.txt checks and a per-host request delay."""
+
+    def __init__(self, delay_seconds: float) -> None:
+        self.delay_seconds = max(0.0, delay_seconds)
         self.last_fetch_by_host: dict[str, float] = {}
-        self.robots_by_host: dict[str, RobotFileParser] = {}
+        self.robots_by_origin: dict[str, RobotFileParser] = {}
 
     def wait(self, url: str) -> None:
-        host = urlparse(url).netloc
+        host = _host(url)
         elapsed = time.monotonic() - self.last_fetch_by_host.get(host, 0.0)
         if elapsed < self.delay_seconds:
             time.sleep(self.delay_seconds - elapsed)
 
     def mark_fetched(self, url: str) -> None:
-        self.last_fetch_by_host[urlparse(url).netloc] = time.monotonic()
+        self.last_fetch_by_host[_host(url)] = time.monotonic()
 
     def allowed(self, session, url: str) -> bool:
-        parsed = urlparse(url)
-        host = parsed.netloc
-        if host not in self.robots_by_host:
-            robots_url = f"{parsed.scheme}://{host}/robots.txt"
+        parsed = urlsplit(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin not in self.robots_by_origin:
             parser = RobotFileParser()
-            parser.set_url(robots_url)
+            parser.set_url(origin + "/robots.txt")
             try:
-                response = session.get(robots_url, timeout=REQUEST_TIMEOUT_SECONDS)
-                if response.status_code in (401, 403):
+                response = session.get(parser.url, timeout=REQUEST_TIMEOUT_SECONDS)
+                if response.status_code in {401, 403}:
                     parser.parse(["User-agent: *", "Disallow: /"])
                 elif response.status_code < 400:
                     parser.parse(response.text.splitlines())
                 else:
                     parser.parse([])
-            except Exception:
+            except requests.RequestException:
                 parser.parse([])
-            self.robots_by_host[host] = parser
-        return self.robots_by_host[host].can_fetch(USER_AGENT, url)
+            self.robots_by_origin[origin] = parser
+        return self.robots_by_origin[origin].can_fetch(USER_AGENT, url)
 
 
 class CrawlProgress:
-    """Render a single-line crawl progress indicator.
-
-    Normal mode shows only the requested progress signal: a bar plus x/y indexed.
-    Verbose mode adds operational diagnostics that are useful for debugging long
-    crawls, such as processed, queued, skipped, errors, and current URL.
-    """
-
-    def __init__(
-        self,
-        max_pages: int,
-        *,
-        enabled: bool = True,
-        verbose: bool = False,
-        interval_seconds: float = 0.8,
-        stream=None,
-    ) -> None:
+    def __init__(self, max_pages: int, *, enabled: bool, verbose: bool) -> None:
         self.max_pages = max(max_pages, 1)
         self.enabled = enabled
         self.verbose = verbose
-        self.interval_seconds = interval_seconds
-        self.stream = stream or sys.stderr
-        self.interactive = bool(getattr(self.stream, "isatty", lambda: False)())
+        self.stream = sys.stderr
+        self.interactive = self.stream.isatty()
         self.last_render = 0.0
         self.last_width = 0
 
     def update(
-        self,
-        stats: dict[str, int],
-        queued: int | None = None,
-        current_url: str | None = None,
-        *,
-        force: bool = False,
+        self, stats: dict[str, int], queued: int | None = None,
+        current_url: str | None = None, *, force: bool = False
     ) -> None:
         if not self.enabled:
             return
-
         now = time.monotonic()
-        if not force and now - self.last_render < self.interval_seconds:
+        if not force and now - self.last_render < 0.8:
             return
         self.last_render = now
-
-        indexed = stats.get("indexed", 0)
-        processed = stats.get("visited", 0) + stats.get("skipped", 0) + stats.get("errors", 0)
-        fraction = min(indexed / self.max_pages, 1.0)
-        terminal_width = shutil.get_terminal_size((100, 24)).columns
+        width = shutil.get_terminal_size((100, 24)).columns
+        bar_width = 22
+        filled = int(bar_width * min(stats["indexed"] / self.max_pages, 1.0))
+        line = (
+            f"Crawling [{'#' * filled}{'-' * (bar_width - filled)}] "
+            f"{stats['indexed']}/{self.max_pages} indexed"
+        )
         if self.verbose:
-            bar_width = 22 if terminal_width >= 110 else 14
-        else:
-            bar_width = 30 if terminal_width >= 90 else 20
-        filled = int(bar_width * fraction)
-        bar = "#" * filled + "-" * (bar_width - filled)
-
-        line = f"Crawling [{bar}] {indexed}/{self.max_pages} indexed"
-        if self.verbose:
-            queued_text = "?" if queued is None else str(queued)
             line += (
-                f" | proc {processed}"
-                f" | q {queued_text}"
-                f" | skip {stats.get('skipped', 0)}"
-                f" | err {stats.get('errors', 0)}"
-                f" | new {stats.get('discovered', 0)}"
+                f" | fetched {stats['fetched']} | bridge {stats['bridges']} "
+                f"| skip {stats['skipped']} | err {stats['errors']} | q {queued or 0}"
             )
-
-        if self.verbose and current_url:
-            parsed = urlparse(current_url)
-            current = f"{parsed.netloc}{parsed.path}"
-            remaining = max(0, terminal_width - len(line) - 8)
-            if remaining:
-                line += f" | now {current[:remaining]}"
-
-        visible_width = max(20, terminal_width - 1)
-        line = line[:visible_width]
+            if current_url:
+                line += f" | {_host(current_url)}"
+        line = line[: max(20, width - 1)]
         if self.interactive:
-            rendered = line.ljust(max(self.last_width, len(line)))
-            self.last_width = len(rendered)
-            self.stream.write("\r" + rendered)
+            self.stream.write("\r" + line.ljust(max(self.last_width, len(line))))
+            self.last_width = max(self.last_width, len(line))
         else:
             self.stream.write(line + "\n")
         self.stream.flush()
 
     def done(self, stats: dict[str, int], queued: int | None = None) -> None:
-        if self.enabled:
-            self.update(stats, queued, force=True)
-            if self.interactive:
-                self.stream.write("\n")
-            self.stream.flush()
+        self.update(stats, queued, force=True)
+        if self.enabled and self.interactive:
+            self.stream.write("\n")
 
 
-def fetch_html(session, url: str) -> tuple[str, str, int]:
-    """Download one HTML page while enforcing status, type, and size limits."""
-    response = session.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True)
-    status_code = response.status_code
+def fetch_html(session, url: str) -> tuple[str, str, int, str]:
+    """Download one bounded HTML response and return its canonical final URL."""
+    try:
+        response = session.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True)
+    except requests.RequestException as exc:
+        raise FetchError(str(exc), retryable=True) from exc
+    if response.status_code >= 400:
+        retryable = response.status_code == 429 or response.status_code >= 500
+        raise FetchError(
+            f"HTTP {response.status_code}",
+            retryable=retryable,
+            http_status=response.status_code,
+        )
     content_type = response.headers.get("content-type", "")
-
-    if status_code >= 400:
-        raise RuntimeError(f"HTTP {status_code}")
     if "text/html" not in content_type.lower():
-        raise RuntimeError(f"not HTML: {content_type}")
-
-    chunks = []
+        raise FetchError(f"not HTML: {content_type}")
+    chunks: list[bytes] = []
     total = 0
-    for chunk in response.iter_content(chunk_size=8192, decode_unicode=False):
-        if not chunk:
-            continue
+    for chunk in response.iter_content(chunk_size=8192):
         total += len(chunk)
         if total > MAX_HTML_BYTES:
-            raise RuntimeError("HTML document too large")
+            raise FetchError("HTML document too large")
         chunks.append(chunk)
-
     encoding = response.encoding or response.apparent_encoding or "utf-8"
-    html = b"".join(chunks).decode(encoding, errors="replace")
-    return html, content_type, status_code
+    final_url = canonicalize_url(response.url) or url
+    return (
+        b"".join(chunks).decode(encoding, errors="replace"),
+        content_type,
+        response.status_code,
+        final_url,
+    )
+
+
+def _should_follow(
+    link: ExtractedLink,
+    *,
+    page_english: bool,
+    page_relevant: bool,
+    context_relevant: bool,
+    depth: int,
+    next_bridge_steps: int,
+    bridge_depth: int,
+    off_topic_follow_depth: int,
+) -> bool:
+    english_hint = link.language_hint == "en" or bool(
+        ENGLISH_LINK_HINT.search(f"{link.url} {link.anchor}")
+    )
+    language_ok = page_english or english_hint or next_bridge_steps <= bridge_depth
+    topic_ok = (
+        page_relevant
+        or context_relevant
+        or depth < off_topic_follow_depth
+        or is_tuebingen_related(link.url, link.anchor, "")
+    )
+    return language_ok and topic_ok
 
 
 def crawl(
@@ -354,106 +566,171 @@ def crawl(
     max_processed: int | None = None,
     per_host_limit: int | None = None,
     max_links_per_page: int = DEFAULT_MAX_LINKS_PER_PAGE,
+    bridge_depth: int = DEFAULT_BRIDGE_DEPTH,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    off_topic_follow_depth: int = DEFAULT_OFF_TOPIC_FOLLOW_DEPTH,
+    allow_external: bool = True,
+    max_external_domains: int = DEFAULT_MAX_EXTERNAL_DOMAINS,
+    retry_errors: bool = True,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    min_text_chars: int = DEFAULT_MIN_TEXT_CHARS,
 ) -> dict[str, int]:
-    """Crawl English Tübingen-related web pages into a restartable SQLite index."""
+    """Crawl candidate pages and index only relevant English documents."""
     if requests is None:
-        raise RuntimeError("Install requests to crawl the web: pip install requests")
+        raise RuntimeError("Install requests to crawl the web")
+    seeds = [url for raw in frontier if (url := canonicalize_url(raw))]
+    if not seeds:
+        raise ValueError("At least one valid HTTP(S) seed URL is required")
 
     conn = connect(index)
-    seed_urls = [canonicalize_url(url) for url in frontier]
-    add_to_frontier(conn, (url for url in seed_urls if url), score_url_priority)
-
+    add_to_frontier(conn, seeds, score_url_priority, context_relevant=True)
+    retried = (
+        requeue_retryable_errors(conn, max_attempts=max_retries)
+        if retry_errors
+        else 0
+    )
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
-    politeness = Politeness(delay_seconds=crawl_delay_seconds)
+    politeness = Politeness(crawl_delay_seconds)
+    scope = CrawlScope(
+        seeds, allow_external=allow_external,
+        max_external_domains=max_external_domains,
+    )
+    # Preserve externally discovered hosts across interrupted runs.
+    for (queued_url,) in conn.execute(
+        "SELECT url FROM frontier WHERE source_host IS NOT NULL"
+    ):
+        host = _host(str(queued_url))
+        if host and not scope.contains(host):
+            scope.admitted_hosts.add(host)
     max_processed = max_processed or max(max_pages * 12, max_pages + 25)
     per_host_limit = per_host_limit or max(8, max_pages // 4)
     indexed_by_host: dict[str, int] = {}
-    for (doc_url,) in conn.execute("SELECT url FROM documents").fetchall():
-        host = urlparse(doc_url).netloc.lower()
+    for (document_url,) in conn.execute("SELECT url FROM documents"):
+        host = _host(document_url)
         indexed_by_host[host] = indexed_by_host.get(host, 0) + 1
 
     stats = {
-        "indexed": 0,
-        "visited": 0,
-        "skipped": 0,
-        "errors": 0,
-        "discovered": 0,
-        "processed_limit_reached": 0,
-        "frontier_depleted": 0,
+        "indexed": 0, "visited": 0, "fetched": 0, "bridges": 0,
+        "skipped": 0, "errors": 0, "discovered": 0,
+        "processed_limit_reached": 0, "frontier_depleted": 0,
+        "retried": retried, "authority_nodes": 0,
     }
-    progress = CrawlProgress(max_pages, enabled=show_progress, verbose=progress_verbose)
-
+    progress = CrawlProgress(
+        max_pages, enabled=show_progress, verbose=progress_verbose
+    )
     try:
         while stats["indexed"] < max_pages:
-            processed = stats["visited"] + stats["skipped"] + stats["errors"]
+            processed = stats["fetched"] + stats["errors"]
             if processed >= max_processed:
                 stats["processed_limit_reached"] = 1
                 break
-
-            queued = frontier_counts(conn)["queued"] if progress_verbose else None
-            progress.update(stats, queued)
-
-            saturated_hosts = {
-                host for host, count in indexed_by_host.items() if count >= per_host_limit
+            saturated = {
+                host for host, count in indexed_by_host.items()
+                if count >= per_host_limit
             }
-            url = next_frontier_url(conn, excluded_hosts=saturated_hosts)
-            if not url:
+            item = next_frontier_item(conn, excluded_hosts=saturated)
+            if not item:
                 stats["frontier_depleted"] = 1
                 break
-
-            progress.update(
-                stats,
-                queued,
-                current_url=url,
-                force=progress.interactive and progress_verbose,
-            )
+            url = str(item["url"])
+            queued = frontier_counts(conn)["queued"] if progress_verbose else None
+            progress.update(stats, queued, url)
             try:
                 if not politeness.allowed(session, url):
                     mark_frontier(conn, url, "skipped", "blocked by robots.txt")
                     stats["skipped"] += 1
                     continue
-
                 politeness.wait(url)
-                html, content_type, status_code = fetch_html(session, url)
+                html, content_type, status_code, final_url = fetch_html(session, url)
                 politeness.mark_fetched(url)
-
-                doc, links, html_lang = extract_document(url, html, content_type, status_code)
-                # 1) check relevance
-                if not is_tuebingen_related(doc.url, doc.title, doc.text):
-                    mark_frontier(conn, url, "skipped", "not Tübingen-related")
-                    stats["skipped"] += 1
-                    continue
-                # 2) check language
-                if not is_probably_english(doc.text, html_lang=html_lang):
-                    mark_frontier(conn, url, "skipped", "not English")
-                    stats["skipped"] += 1
-                    continue
-                # 3) only enqueue links that passed relevance and language check
-                prioritized_links = sorted(set(links), key=score_url_priority, reverse=True)
-                stats["discovered"] += add_to_frontier(
-                    conn,
-                    prioritized_links[:max_links_per_page],
-                    score_url_priority,
+                stats["fetched"] += 1
+                document, links, html_lang = extract_document(
+                    final_url, html, content_type, status_code
                 )
-                # 4) index the page
-                add_document_to_connection(conn, doc)
-                mark_frontier(conn, url, "visited")
-                host = urlparse(url).netloc.lower()
-                indexed_by_host[host] = indexed_by_host.get(host, 0) + 1
-                stats["indexed"] += 1
-                stats["visited"] += 1
+                language, language_confidence = detect_language(
+                    document.text, html_lang
+                )
+                page_english = language == "en" and language_confidence >= 0.70
+                document = replace(document, language=language)
+                page_relevant = is_tuebingen_related(
+                    document.url, document.title, document.text
+                )
+                record_links(
+                    conn,
+                    final_url,
+                    ((link.url, link.anchor) for link in links),
+                )
 
+                depth = int(item["depth"])
+                if depth < max_depth:
+                    next_bridge = 0 if page_english else int(item["bridge_steps"]) + 1
+                    candidates = sorted(
+                        links, key=lambda link: score_url_priority(link.url), reverse=True
+                    )[:max_links_per_page]
+                    for link in candidates:
+                        if not _should_follow(
+                            link,
+                            page_english=page_english,
+                            page_relevant=page_relevant,
+                            context_relevant=bool(item["context_relevant"]),
+                            depth=depth,
+                            next_bridge_steps=next_bridge,
+                            bridge_depth=bridge_depth,
+                            off_topic_follow_depth=off_topic_follow_depth,
+                        ):
+                            continue
+                        if not scope.admit_link(
+                            link, source_relevant=page_relevant, source_depth=depth
+                        ):
+                            continue
+                        stats["discovered"] += add_to_frontier(
+                            conn,
+                            [link.url],
+                            score_url_priority,
+                            depth=depth + 1,
+                            bridge_steps=next_bridge,
+                            context_relevant=page_relevant,
+                            source_host=_host(final_url),
+                        )
+
+                if (
+                    page_english
+                    and page_relevant
+                    and len(document.text) >= max(0, min_text_chars)
+                ):
+                    add_document_to_connection(conn, document)
+                    mark_frontier(conn, url, "visited")
+                    host = _host(final_url)
+                    indexed_by_host[host] = indexed_by_host.get(host, 0) + 1
+                    stats["indexed"] += 1
+                    stats["visited"] += 1
+                else:
+                    reason = (
+                        f"traversed only: language={language} "
+                        f"confidence={language_confidence:.2f} relevant={page_relevant} "
+                        f"text_chars={len(document.text)}"
+                    )
+                    mark_frontier(conn, url, "skipped", reason)
+                    stats["skipped"] += 1
+                    if not page_english:
+                        stats["bridges"] += 1
             except Exception as exc:
-                if progress_verbose:
-                    print(f"\n{exc}")
-                mark_frontier(conn, url, "error", str(exc)[:500])
+                mark_frontier(
+                    conn,
+                    url,
+                    "error",
+                    str(exc)[:500],
+                    retryable=bool(getattr(exc, "retryable", False)),
+                    http_status=getattr(exc, "http_status", None),
+                )
                 stats["errors"] += 1
-
+                if progress_verbose:
+                    print(f"\n{url}: {exc}", file=sys.stderr)
     finally:
+        stats["authority_nodes"] = recompute_pagerank(conn)
         queued = frontier_counts(conn)["queued"] if progress_verbose else None
         progress.done(stats, queued)
         conn.close()
         session.close()
-
     return stats
