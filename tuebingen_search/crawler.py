@@ -11,7 +11,7 @@ import re
 import shutil
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -89,6 +89,83 @@ class FetchError(RuntimeError):
         super().__init__(message)
         self.retryable = retryable
         self.http_status = http_status
+
+
+def _build_document(
+    *,
+    url: str,
+    title: str,
+    text: str,
+    html: str,
+    content_type: str,
+    status_code: int,
+    canonical_url: str,
+    description: str,
+) -> Document:
+    """Build a document while tolerating the original non-slotted model.
+
+    The final model declares ``canonical_url`` and ``description``. Older
+    project copies did not. Attaching those values after construction prevents
+    a partially updated checkout from failing inside HTML extraction.
+    """
+    required = {
+        "url": url,
+        "title": title,
+        "text": text,
+        "html": html,
+        "fetched_at": utc_now(),
+        "content_type": content_type,
+        "status_code": status_code,
+    }
+    metadata = {
+        "canonical_url": canonical_url,
+        "description": description,
+    }
+    declared_fields = set(getattr(Document, "__dataclass_fields__", {}))
+    constructor_values = dict(required)
+    constructor_values.update(
+        {
+            name: value
+            for name, value in metadata.items()
+            if not declared_fields or name in declared_fields
+        }
+    )
+    document = Document(**constructor_values)
+    for name, value in metadata.items():
+        if name in declared_fields:
+            continue
+        try:
+            object.__setattr__(document, name, value)
+        except (AttributeError, TypeError) as exc:
+            raise RuntimeError(
+                "The crawler and models.py are from different project "
+                "versions. Replace tuebingen_search/models.py with the "
+                "version supplied alongside this crawler."
+            ) from exc
+    return document
+
+
+def _set_document_metadata(document: Document, **values: str) -> Document:
+    """Attach crawl metadata, including to the original frozen model."""
+    for name, value in values.items():
+        try:
+            object.__setattr__(document, name, value)
+        except (AttributeError, TypeError) as exc:
+            raise RuntimeError(
+                "The crawler and models.py are from different project "
+                "versions. Replace tuebingen_search/models.py with the "
+                "version supplied alongside this crawler."
+            ) from exc
+    return document
+
+
+def _tag_attribute(tag, name: str, default=None):
+    """Read a Beautiful Soup attribute even after a tag was decomposed."""
+    attributes = getattr(tag, "attrs", None)
+    if attributes is None or not hasattr(attributes, "get"):
+        return default
+    value = attributes.get(name, default)
+    return default if value is None else value
 
 
 class _FallbackHTMLParser(HTMLParser):
@@ -203,12 +280,11 @@ def _extract_document_without_bs4(
     ) or url
     text = re.sub(r"\s+", " ", " ".join(parser.text_parts)).strip()[:40_000]
     return (
-        Document(
+        _build_document(
             url=url,
             title=" ".join(parser.title_parts).strip(),
             text=text,
             html=html,
-            fetched_at=utc_now(),
             content_type=content_type,
             status_code=status_code,
             canonical_url=canonical_url,
@@ -272,7 +348,10 @@ def score_url_priority(url: str) -> float:
         score += 1.0
     if len(urlsplit(url).query) > 120:
         score -= 2.0
-    if any(token in normalized for token in ("calendar", "login", "share=", "replytocom")):
+    if any(
+        token in normalized
+        for token in ("calendar", "login", "share=", "replytocom")
+    ):
         score -= 3.0
     return score
 
@@ -292,8 +371,15 @@ def extract_main_text(soup: BeautifulSoup, max_chars: int = 40_000) -> str:
     ):
         element.decompose()
     for element in list(root.select("[id], [class]")):
+        if getattr(element, "attrs", None) is None:
+            continue
+        classes = _tag_attribute(element, "class", [])
+        if isinstance(classes, str):
+            class_text = classes
+        else:
+            class_text = " ".join(str(value) for value in classes)
         attrs = (
-            str(element.get("id", "")) + " " + " ".join(element.get("class", []))
+            str(_tag_attribute(element, "id", "")) + " " + class_text
         ).lower()
         if any(word in attrs for word in ("cookie", "consent", "gdpr")):
             element.decompose()
@@ -311,8 +397,8 @@ def extract_document(
     soup = BeautifulSoup(html, "html.parser")
     title_tag = soup.find("meta", property="og:title")
     title = (
-        title_tag.get("content", "").strip()
-        if title_tag
+        str(_tag_attribute(title_tag, "content", "")).strip()
+        if title_tag is not None
         else (soup.title.get_text(" ", strip=True) if soup.title else "")
     )
     description_tag = (
@@ -320,23 +406,29 @@ def extract_document(
         or soup.select_one('meta[property="og:description"]')
     )
     description = (
-        description_tag.get("content", "").strip()[:1_000]
-        if description_tag
+        str(_tag_attribute(description_tag, "content", "")).strip()[:1_000]
+        if description_tag is not None
         else ""
     )
     canonical_tag = soup.select_one('link[rel~="canonical"][href]')
     canonical_url = (
-        canonicalize_url(canonical_tag.get("href", ""), base_url=url)
-        if canonical_tag
+        canonicalize_url(
+            str(_tag_attribute(canonical_tag, "href", "")), base_url=url
+        )
+        if canonical_tag is not None
         else url
     ) or url
     text = extract_main_text(soup)
     html_tag = soup.find("html")
-    html_lang = html_tag.get("lang") if html_tag else None
+    html_lang = (
+        str(_tag_attribute(html_tag, "lang", "")) or None
+        if html_tag is not None
+        else None
+    )
 
     links: dict[str, ExtractedLink] = {}
     for anchor in soup.select("a[href]"):
-        raw = anchor.get("href", "").strip()
+        raw = str(_tag_attribute(anchor, "href", "")).strip()
         if not raw or raw.lower().startswith(
             ("javascript:", "mailto:", "tel:", "data:", "#")
         ):
@@ -345,16 +437,19 @@ def extract_document(
         if not target:
             continue
         label = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))[:250]
-        hreflang = (anchor.get("hreflang") or "").lower().split("-", 1)[0]
+        hreflang = (
+            str(_tag_attribute(anchor, "hreflang", ""))
+            .lower()
+            .split("-", 1)[0]
+        )
         links.setdefault(target, ExtractedLink(target, label, hreflang))
 
     return (
-        Document(
+        _build_document(
             url=url,
             title=title,
             text=text,
             html=html,
-            fetched_at=utc_now(),
             content_type=content_type,
             status_code=status_code,
             canonical_url=canonical_url,
@@ -403,7 +498,10 @@ class CrawlScope:
             or not source_relevant
             or source_depth > 2
             or len(self.admitted_hosts) >= self.max_external_domains
-            or any(_is_host_or_subdomain(host, blocked) for blocked in BLOCKED_DISCOVERY_HOSTS)
+            or any(
+                _is_host_or_subdomain(host, blocked)
+                for blocked in BLOCKED_DISCOVERY_HOSTS
+            )
         ):
             return False
         # Links directly from a relevant seed/aggregator page are allowed as
@@ -500,35 +598,39 @@ class CrawlProgress:
 
 def fetch_html(session, url: str) -> tuple[str, str, int, str]:
     """Download one bounded HTML response and return its canonical final URL."""
+    response = None
     try:
         response = session.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True)
+        if response.status_code >= 400:
+            retryable = response.status_code == 429 or response.status_code >= 500
+            raise FetchError(
+                f"HTTP {response.status_code}",
+                retryable=retryable,
+                http_status=response.status_code,
+            )
+        content_type = response.headers.get("content-type", "")
+        if "text/html" not in content_type.lower():
+            raise FetchError(f"not HTML: {content_type}")
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=8192):
+            total += len(chunk)
+            if total > MAX_HTML_BYTES:
+                raise FetchError("HTML document too large")
+            chunks.append(chunk)
+        encoding = response.encoding or response.apparent_encoding or "utf-8"
+        final_url = canonicalize_url(response.url) or url
+        return (
+            b"".join(chunks).decode(encoding, errors="replace"),
+            content_type,
+            response.status_code,
+            final_url,
+        )
     except requests.RequestException as exc:
         raise FetchError(str(exc), retryable=True) from exc
-    if response.status_code >= 400:
-        retryable = response.status_code == 429 or response.status_code >= 500
-        raise FetchError(
-            f"HTTP {response.status_code}",
-            retryable=retryable,
-            http_status=response.status_code,
-        )
-    content_type = response.headers.get("content-type", "")
-    if "text/html" not in content_type.lower():
-        raise FetchError(f"not HTML: {content_type}")
-    chunks: list[bytes] = []
-    total = 0
-    for chunk in response.iter_content(chunk_size=8192):
-        total += len(chunk)
-        if total > MAX_HTML_BYTES:
-            raise FetchError("HTML document too large")
-        chunks.append(chunk)
-    encoding = response.encoding or response.apparent_encoding or "utf-8"
-    final_url = canonicalize_url(response.url) or url
-    return (
-        b"".join(chunks).decode(encoding, errors="replace"),
-        content_type,
-        response.status_code,
-        final_url,
-    )
+    finally:
+        if response is not None:
+            response.close()
 
 
 def _should_follow(
@@ -611,7 +713,7 @@ def crawl(
         indexed_by_host[host] = indexed_by_host.get(host, 0) + 1
 
     stats = {
-        "indexed": 0, "visited": 0, "fetched": 0, "bridges": 0,
+        "indexed": 0, "visited": 0, "attempted": 0, "fetched": 0, "bridges": 0,
         "skipped": 0, "errors": 0, "discovered": 0,
         "processed_limit_reached": 0, "frontier_depleted": 0,
         "retried": retried, "authority_nodes": 0,
@@ -621,7 +723,7 @@ def crawl(
     )
     try:
         while stats["indexed"] < max_pages:
-            processed = stats["fetched"] + stats["errors"]
+            processed = stats["attempted"]
             if processed >= max_processed:
                 stats["processed_limit_reached"] = 1
                 break
@@ -642,6 +744,7 @@ def crawl(
                     stats["skipped"] += 1
                     continue
                 politeness.wait(url)
+                stats["attempted"] += 1
                 html, content_type, status_code, final_url = fetch_html(session, url)
                 politeness.mark_fetched(url)
                 stats["fetched"] += 1
@@ -652,7 +755,7 @@ def crawl(
                     document.text, html_lang
                 )
                 page_english = language == "en" and language_confidence >= 0.70
-                document = replace(document, language=language)
+                document = _set_document_metadata(document, language=language)
                 page_relevant = is_tuebingen_related(
                     document.url, document.title, document.text
                 )
@@ -666,7 +769,9 @@ def crawl(
                 if depth < max_depth:
                     next_bridge = 0 if page_english else int(item["bridge_steps"]) + 1
                     candidates = sorted(
-                        links, key=lambda link: score_url_priority(link.url), reverse=True
+                        links,
+                        key=lambda link: score_url_priority(link.url),
+                        reverse=True,
                     )[:max_links_per_page]
                     for link in candidates:
                         if not _should_follow(
@@ -708,7 +813,8 @@ def crawl(
                 else:
                     reason = (
                         f"traversed only: language={language} "
-                        f"confidence={language_confidence:.2f} relevant={page_relevant} "
+                        f"confidence={language_confidence:.2f} "
+                        f"relevant={page_relevant} "
                         f"text_chars={len(document.text)}"
                     )
                     mark_frontier(conn, url, "skipped", reason)
@@ -716,17 +822,31 @@ def crawl(
                     if not page_english:
                         stats["bridges"] += 1
             except Exception as exc:
+                retryable = bool(getattr(exc, "retryable", False))
+                attempt_number = int(item["attempts"]) + 1
+                retry_now = retryable and attempt_number < max(1, max_retries)
                 mark_frontier(
                     conn,
                     url,
-                    "error",
+                    "queued" if retry_now else "error",
                     str(exc)[:500],
-                    retryable=bool(getattr(exc, "retryable", False)),
+                    retryable=retryable,
                     http_status=getattr(exc, "http_status", None),
+                    priority_penalty=(
+                        1.5 * attempt_number if retry_now else 0.0
+                    ),
                 )
-                stats["errors"] += 1
+                if retry_now:
+                    stats["retried"] += 1
+                else:
+                    stats["errors"] += 1
                 if progress_verbose:
-                    print(f"\n{url}: {exc}", file=sys.stderr)
+                    suffix = (
+                        f" (retry {attempt_number + 1}/{max_retries} queued)"
+                        if retry_now
+                        else ""
+                    )
+                    print(f"\n{url}: {exc}{suffix}", file=sys.stderr)
     finally:
         stats["authority_nodes"] = recompute_pagerank(conn)
         queued = frontier_counts(conn)["queued"] if progress_verbose else None

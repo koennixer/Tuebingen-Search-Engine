@@ -402,6 +402,7 @@ def mark_frontier(
     *,
     retryable: bool = False,
     http_status: int | None = None,
+    priority_penalty: float = 0.0,
 ) -> None:
     """Update crawl status and diagnostics for one URL."""
     conn.execute(
@@ -412,7 +413,8 @@ def mark_frontier(
             attempts = attempts + 1,
             error = ?,
             retryable = ?,
-            http_status = ?
+            http_status = ?,
+            priority = priority - ?
         WHERE url = ?
         """,
         (
@@ -421,6 +423,7 @@ def mark_frontier(
             error,
             int(retryable),
             http_status,
+            max(0.0, float(priority_penalty)),
             url,
         ),
     )
@@ -428,12 +431,25 @@ def mark_frontier(
 
 
 def requeue_retryable_errors(conn: sqlite3.Connection, *, max_attempts: int = 3) -> int:
-    """Move transient failures back to the queue when a crawl resumes."""
+    """Move transient and now-fixed crawler failures back to the queue.
+
+    Earlier crawler versions stored streaming timeouts and two extraction
+    failures as permanent errors. Recognizing those messages here lets an
+    existing frontier recover after upgrading instead of requiring users to
+    delete their index.
+    """
     cursor = conn.execute(
         """
         UPDATE frontier
         SET status = 'queued', error = NULL
-        WHERE status = 'error' AND retryable = 1 AND attempts < ?
+        WHERE status = 'error'
+          AND attempts < ?
+          AND (
+              retryable = 1
+              OR error LIKE '%timed out%'
+              OR error LIKE '%unexpected keyword argument%canonical_url%'
+              OR error LIKE '%NoneType%object has no attribute%get%'
+          )
         """,
         (max(1, max_attempts),),
     )
