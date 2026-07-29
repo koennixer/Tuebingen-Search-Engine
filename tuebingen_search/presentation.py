@@ -44,6 +44,21 @@ def domain_facets(results: list[ResultLike]) -> list[tuple[str, int, float]]:
     )
 
 
+def intent_facets(results: list[ResultLike]) -> list[tuple[str, str, int]]:
+    """Count the transparent page topics attached by the second stage."""
+    counts: Counter[tuple[str, str]] = Counter()
+    for result in results:
+        key = str(_result_value(result, "intent", "general"))
+        label = str(_result_value(result, "intent_label", "General Tübingen"))
+        counts[(key, label)] += 1
+    return [
+        (key, label, count)
+        for (key, label), count in sorted(
+            counts.items(), key=lambda item: (-item[1], item[0][1])
+        )
+    ]
+
+
 def matched_query_terms(query: str, result: ResultLike) -> list[str]:
     """Return query terms visible in a result title, URL, or snippet."""
     haystack = tokenize(
@@ -144,17 +159,32 @@ def explain_result(query: str, result: ResultLike) -> str:
     bm25_score = float(_result_value(result, "bm25_score", 0.0) or 0.0)
     expanded_score = float(_result_value(result, "expanded_score", 0.0) or 0.0)
     final_score = float(_result_value(result, "score", 0.0) or 0.0)
+    semantic_score = float(_result_value(result, "semantic_score", 0.0) or 0.0)
+    authority_score = float(_result_value(result, "authority_score", 0.0) or 0.0)
+    why = str(_result_value(result, "why", ""))
+    components = _result_value(result, "score_components", {})
     matches = matched_query_terms(query, result)
-    return "\n".join(
-        [
-            f"Explanation for rank {rank}",
-            f"  final score:    {final_score:.6f}",
-            f"  BM25 score:     {bm25_score:.6f}",
-            f"  expanded score: {expanded_score:.6f}",
-            f"  matched terms:  {', '.join(matches) if matches else '(none shown in title/snippet/url)'}",
-            f"  URL:            {_result_value(result, 'url', '')}",
-        ]
-    )
+    lines = [
+        f"Explanation for rank {rank}",
+        f"  final score:      {final_score:.6f}",
+        f"  BM25F score:      {bm25_score:.6f}",
+        f"  feedback score:   {expanded_score:.6f}",
+        f"  semantic score:   {semantic_score:.6f}",
+        f"  authority score:  {authority_score:.6f}",
+        f"  matched terms:    {', '.join(matches) if matches else '(none shown in title/snippet/url)'}",
+    ]
+    if isinstance(components, dict) and components:
+        lines.append(
+            "  normalized parts: "
+            + ", ".join(
+                f"{key}={float(value):.3f}"
+                for key, value in components.items()
+            )
+        )
+    if why:
+        lines.append(f"  why:              {why}")
+    lines.append(f"  URL:              {_result_value(result, 'url', '')}")
+    return "\n".join(lines)
 
 def interactive_search(index: str | Path, *, page_size: int = 10, top_k: int = 100) -> None:
     """Open the paged interactive search interface."""
@@ -241,6 +271,31 @@ def batch(
                 f.write(f"{query_id}\t{rank}\t{url}\t{score:.6f}\n")
 
     return output
+
+
+def validate_batch_results(
+    results: dict[str, list[ResultLike]],
+    *,
+    expected_per_query: int = 100,
+) -> list[str]:
+    """Return actionable warnings before live assignment submission."""
+    warnings: list[str] = []
+    for query_id, query_results in results.items():
+        if len(query_results) < expected_per_query:
+            warnings.append(
+                f"Query {query_id}: only {len(query_results)} results "
+                f"(expected {expected_per_query}; enlarge the crawl)"
+            )
+        urls = [str(_result_value(result, "url", "")) for result in query_results]
+        if len(urls) != len(set(urls)):
+            warnings.append(f"Query {query_id}: duplicate URLs found")
+        scores = [
+            float(_result_value(result, "score", 0.0) or 0.0)
+            for result in query_results
+        ]
+        if any(a < b for a, b in zip(scores, scores[1:])):
+            warnings.append(f"Query {query_id}: scores are not descending")
+    return warnings
 
 
 def run_batch_file(
