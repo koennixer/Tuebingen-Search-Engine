@@ -9,10 +9,17 @@ from pathlib import Path
 
 from .console import heading, success, table
 from .crawler import (
+    DEFAULT_BRIDGE_DEPTH,
     DEFAULT_CRAWL_DELAY_SECONDS,
+    DEFAULT_MAX_DEPTH,
+    DEFAULT_MAX_EXTERNAL_DOMAINS,
     DEFAULT_MAX_LINKS_PER_PAGE,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_MIN_TEXT_CHARS,
+    DEFAULT_OFF_TOPIC_FOLLOW_DEPTH,
     crawl as run_crawl,
 )
+from .evaluation import evaluate_run
 from .presentation import (
     interactive_search,
     print_domain_facets,
@@ -28,22 +35,27 @@ DEFAULT_INDEX = "tuebingen_index.sqlite3"
 DEFAULT_MAX_PAGES = 50
 DEFAULT_SEEDS = [
     "https://www.tuebingen.de/en/",
-    #"https://www.tuebingen-info.de/en/",
-    #"https://www.tuebingen-info.de/en/attractions",
-    #"https://www.tuebingen-info.de/en/restaurants",
-    #"https://www.tuebingen-info.de/en/events",
-    #"https://www.tuebingen.de/en/3521.html",
-    #"https://www.tuebingen.de/en/3773.html",
-    #"https://www.tuebingen.de/en/4456.html",
+    "https://www.tuebingen-info.de/en/",
     "https://www.unimuseum.uni-tuebingen.de/en/museum-at-hohentuebingen-castle",
     "https://www.komoot.com/guide/355570/castles-in-tuebingen-district",
-    "https://www.outdooractive.com/en/routes/tuebingen/routes-in-tuebingen/1442519/",
     "https://www.tripadvisor.com/Tourism-g198539-Tubingen_Baden_Wurttemberg-Vacations.html",
-    #"https://uni-tuebingen.de/en/",
+    "https://uni-tuebingen.de/en/",
     "https://www.germany.travel/en/",
     "https://uni-tuebingen.de/en/international/study-in-tuebingen/erasmus-and-exchange-to-tuebingen/",
     "https://www.visit-bw.com/en/",
     "https://www.mygermanyvacation.com/best-things-to-do-and-see-in-tubingen-germany/",
+    "https://www.opentable.com/food-near-me/stadt-tubingen-germany",
+    "https://www.tripadvisor.com/Restaurants-g198539-c10646-Tubingen_Baden_Wurttemberg.html",
+    "https://www.reddit.com/r/Tuebingen/comments/1iscxbg/wo_kann_man_hier_gut_essen/?tl=en",
+    "https://rausgegangen.de/en/tubingen/category/food-and-drinks/",
+    "https://wanderlog.com/list/geoCategory/312176/best-spots-for-lunch-in-tubingen",
+    "https://www.tripadvisor.com/Attractions-g198539-Activities-Tubingen_Baden_Wurttemberg.html",
+    "https://www.germansights.com/tubingen/",
+    "https://www.visitacity.com/en/tubingen/attraction-by-type/all-attractions",
+    "https://www.tuimusement.com/us/germany/tubingen/d_5455-c_64/",
+    "https://www.travelocity.com/Things-To-Do-In-Tuebingen.d181220.Travel-Guide-Activities",
+    "https://www.speisekarte.de/tübingen/restaurants",
+    "https://www.tuebingen-info.de/de/mein-aufenthalt/uebernachten",
 ]
 
 
@@ -152,6 +164,14 @@ Examples
             max_processed=options.max_processed,
             per_host_limit=options.per_host_limit,
             max_links_per_page=options.max_links_per_page,
+            bridge_depth=options.bridge_depth,
+            max_depth=options.max_depth,
+            off_topic_follow_depth=options.off_topic_follow_depth,
+            allow_external=not options.no_external,
+            max_external_domains=options.max_external_domains,
+            retry_errors=not options.no_retry_errors,
+            max_retries=options.max_retries,
+            min_text_chars=options.min_text_chars,
         )
         print_crawl_summary(summary)
         print_index_statistics(self.index)
@@ -181,7 +201,7 @@ Examples
         except ValueError as exc:
             print(exc)
             return
-        start_web_interface(options.host, options.port)
+        start_web_interface(options.host, options.port, self.index)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -210,6 +230,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
     crawl_parser.add_argument("--max-processed", type=int)
     crawl_parser.add_argument("--per-host-limit", type=int)
     crawl_parser.add_argument("--max-links-per-page", type=int, default=DEFAULT_MAX_LINKS_PER_PAGE)
+    crawl_parser.add_argument("--bridge-depth", type=int, default=DEFAULT_BRIDGE_DEPTH)
+    crawl_parser.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH)
+    crawl_parser.add_argument(
+        "--off-topic-follow-depth", type=int, default=DEFAULT_OFF_TOPIC_FOLLOW_DEPTH
+    )
+    crawl_parser.add_argument(
+        "--max-external-domains", type=int, default=DEFAULT_MAX_EXTERNAL_DOMAINS
+    )
+    crawl_parser.add_argument(
+        "--max-retries", type=int, default=DEFAULT_MAX_RETRIES
+    )
+    crawl_parser.add_argument(
+        "--min-text-chars", type=int, default=DEFAULT_MIN_TEXT_CHARS
+    )
+    crawl_parser.add_argument(
+        "--no-retry-errors",
+        action="store_true",
+        help="do not requeue transient failures from an earlier crawl",
+    )
+    crawl_parser.add_argument(
+        "--no-external",
+        action="store_true",
+        help="stay on seed domains instead of discovering linked business sites",
+    )
     crawl_parser.add_argument(
         "-v",
         "--verbose",
@@ -242,6 +286,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--index", default=argparse.SUPPRESS, help="SQLite index path")
     export_parser.add_argument("output", help="output JSONL path")
 
+    evaluate_parser = subparsers.add_parser(
+        "evaluate", help="compute local nDCG metrics for a result TSV"
+    )
+    evaluate_parser.add_argument("run", help="four-column result TSV")
+    evaluate_parser.add_argument(
+        "qrels", help="query_id<TAB>url<TAB>relevance judgments"
+    )
+
     return parser
 
 
@@ -255,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "web":
-        start_web_interface(args.host, args.port)
+        start_web_interface(args.host, args.port, args.index)
         return 0
 
     if args.command == "shell":
@@ -276,6 +328,14 @@ def main(argv: list[str] | None = None) -> int:
             max_processed=args.max_processed,
             per_host_limit=args.per_host_limit,
             max_links_per_page=args.max_links_per_page,
+            bridge_depth=args.bridge_depth,
+            max_depth=args.max_depth,
+            off_topic_follow_depth=args.off_topic_follow_depth,
+            allow_external=not args.no_external,
+            max_external_domains=args.max_external_domains,
+            retry_errors=not args.no_retry_errors,
+            max_retries=args.max_retries,
+            min_text_chars=args.min_text_chars,
         )
         print_crawl_summary(summary)
         print_index_statistics(args.index)
@@ -304,6 +364,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "export-jsonl":
         export_documents_jsonl(args.index, args.output)
         print(success(f"Wrote {args.output}"))
+        return 0
+
+    if args.command == "evaluate":
+        metrics = evaluate_run(args.run, args.qrels)
+        print(heading("Evaluation"))
+        for name, value in metrics["aggregate"].items():
+            print(f"{name:<12} {float(value):.4f}")
+        for query_id, query_metrics in metrics["per_query"].items():
+            formatted = "  ".join(
+                f"{name}={float(value):.4f}"
+                for name, value in query_metrics.items()
+            )
+            print(f"query {query_id:<6} {formatted}")
         return 0
 
     parser.error(f"Unknown command: {args.command}")
@@ -342,6 +415,20 @@ def parse_shell_crawl_args(args: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-processed", type=int)
     parser.add_argument("--per-host-limit", type=int)
     parser.add_argument("--max-links-per-page", type=int, default=DEFAULT_MAX_LINKS_PER_PAGE)
+    parser.add_argument("--bridge-depth", type=int, default=DEFAULT_BRIDGE_DEPTH)
+    parser.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH)
+    parser.add_argument(
+        "--off-topic-follow-depth", type=int, default=DEFAULT_OFF_TOPIC_FOLLOW_DEPTH
+    )
+    parser.add_argument(
+        "--max-external-domains", type=int, default=DEFAULT_MAX_EXTERNAL_DOMAINS
+    )
+    parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
+    parser.add_argument(
+        "--min-text-chars", type=int, default=DEFAULT_MIN_TEXT_CHARS
+    )
+    parser.add_argument("--no-retry-errors", action="store_true")
+    parser.add_argument("--no-external", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
 
@@ -373,6 +460,8 @@ def print_crawl_summary(summary: dict[str, int]) -> None:
                 ("Skipped", summary.get("skipped", 0)),
                 ("Errors", summary.get("errors", 0)),
                 ("Discovered URLs", summary.get("discovered", 0)),
+                ("Transient retries", summary.get("retried", 0)),
+                ("Authority nodes", summary.get("authority_nodes", 0)),
                 ("Processed cap hit", "yes" if summary.get("processed_limit_reached") else "no"),
                 ("Frontier depleted", "yes" if summary.get("frontier_depleted") else "no"),
             ]
@@ -391,6 +480,8 @@ def print_index_statistics(index: str | Path) -> None:
                 ("Avg doc length", f"{stats['avg_document_length']:.1f} tokens"),
                 ("Unique terms", stats["unique_terms"]),
                 ("Queued URLs", stats["queued_urls"]),
+                ("Source domains", stats["domains"]),
+                ("Stored links", stats["link_edges"]),
             ]
         )
     )
