@@ -27,23 +27,27 @@ from .storage import export_documents_jsonl, index_statistics
 DEFAULT_INDEX = "tuebingen_index.sqlite3"
 DEFAULT_MAX_PAGES = 50
 DEFAULT_SEEDS = [
-    "https://www.tuebingen.de/en/",
-    #"https://www.tuebingen-info.de/en/",
-    #"https://www.tuebingen-info.de/en/attractions",
-    #"https://www.tuebingen-info.de/en/restaurants",
-    #"https://www.tuebingen-info.de/en/events",
-    #"https://www.tuebingen.de/en/3521.html",
-    #"https://www.tuebingen.de/en/3773.html",
-    #"https://www.tuebingen.de/en/4456.html",
+
     "https://www.unimuseum.uni-tuebingen.de/en/museum-at-hohentuebingen-castle",
     "https://www.komoot.com/guide/355570/castles-in-tuebingen-district",
-    "https://www.outdooractive.com/en/routes/tuebingen/routes-in-tuebingen/1442519/",
     "https://www.tripadvisor.com/Tourism-g198539-Tubingen_Baden_Wurttemberg-Vacations.html",
-    #"https://uni-tuebingen.de/en/",
+    "https://uni-tuebingen.de/en/",
     "https://www.germany.travel/en/",
     "https://uni-tuebingen.de/en/international/study-in-tuebingen/erasmus-and-exchange-to-tuebingen/",
     "https://www.visit-bw.com/en/",
     "https://www.mygermanyvacation.com/best-things-to-do-and-see-in-tubingen-germany/",
+    "https://www.opentable.com/food-near-me/stadt-tubingen-germany",
+    "https://www.tripadvisor.com/Restaurants-g198539-c10646-Tubingen_Baden_Wurttemberg.html",
+    "https://www.reddit.com/r/Tuebingen/comments/1iscxbg/wo_kann_man_hier_gut_essen/?tl=en",
+    "https://rausgegangen.de/en/tubingen/category/food-and-drinks/",
+    "https://wanderlog.com/list/geoCategory/312176/best-spots-for-lunch-in-tubingen",
+    "https://www.tripadvisor.com/Attractions-g198539-Activities-Tubingen_Baden_Wurttemberg.html",
+    "https://www.germansights.com/tubingen/",
+    "https://www.visitacity.com/en/tubingen/attraction-by-type/all-attractions",
+    "https://www.tuimusement.com/us/germany/tubingen/d_5455-c_64/",
+    "https://www.travelocity.com/Things-To-Do-In-Tuebingen.d181220.Travel-Guide-Activities",
+    "https://www.speisekarte.de/t%C3%BCbingen/restaurants"
+    "https://www.tuebingen-info.de/de/mein-aufenthalt/uebernachten"
 ]
 
 
