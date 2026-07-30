@@ -3,6 +3,13 @@ Basic presentation with webserver works
 
 TODOS:
 - "invention" (we should add some feature that is not just the blue-line links)
+    - link/embedd osm (explore Tübingen on osm, maybe mark out results on map, but would require good results and their address)
+        - leaflet
+    - button leading to page with flyers from the city about Tübingen (maybe like: new in Tübingen or just visiting? view these Flyers by the city)
+        - https://www.tuebingen.de/Dateien/broschuere_willkommen_englisch.pdf, https://www.tuebingen-info.de/_Resources/Persistent/5b64fd3ecc0c244207d301b60db28ba0e33a1a4a/Tour_of_the_city_2022.pdf
+    - checkbox to exclude uni-tuebingen.de websites from the results
+        - just have less than 100 results then or somehow filter out before and have up to 100 results without uni websites
+
 
 optional:
 - make it look nicer
