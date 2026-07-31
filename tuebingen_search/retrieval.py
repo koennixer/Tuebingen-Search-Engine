@@ -210,20 +210,41 @@ def _rm3_expansion_weights(
         for rank, doc_id in enumerate(top_doc_ids, start=1)
     }
     term_scores: Counter[str] = Counter()
+    all_terms = set()
+    chunk_term_counts = {}
+
     for chunk in _batched(top_doc_ids, 900):
         rows = conn.execute(
-            f"""
-            SELECT p.term, p.doc_id, p.body_frequency,
-                   d.body_token_count, t.document_frequency
-            FROM postings p
-            JOIN documents d ON d.id = p.doc_id
-            JOIN terms t ON t.term = p.term
-            WHERE p.doc_id IN ({_placeholders(chunk)})
-            """,
+            f"SELECT id, text FROM documents WHERE id IN ({_placeholders(chunk)})",
             chunk,
         )
-        for term, doc_id, frequency, length, document_frequency in rows:
-            term = str(term)
+        for doc_id, text in rows:
+            doc_id = int(doc_id)
+            doc_snippet = snippet(text, list(query_term_set), length=300)
+            tokens = tokenize(doc_snippet)
+            if not tokens:
+                continue
+            counts = Counter(tokens)
+            chunk_term_counts[doc_id] = (counts, len(tokens))
+            all_terms.update(counts.keys())
+
+    if not all_terms:
+        return {}
+
+    term_dfs = {}
+    for term_chunk in _batched(list(all_terms), 900):
+        df_rows = conn.execute(
+            f"SELECT term, document_frequency FROM terms WHERE term IN ({_placeholders(term_chunk)})",
+            term_chunk
+        )
+        for t, df in df_rows:
+            term_dfs[t] = df
+
+    for doc_id, (counts, length) in chunk_term_counts.items():
+        for term, frequency in counts.items():
+            document_frequency = term_dfs.get(term)
+            if not document_frequency:
+                continue
             if (
                 term in query_term_set
                 or term in stopwords
@@ -235,7 +256,7 @@ def _rm3_expansion_weights(
             idf = _bm25_idf(document_count, int(document_frequency))
             normalized_tf = float(frequency) / max(float(length), 1.0)
             term_scores[term] += (
-                normalized_tf * idf * rank_weights[int(doc_id)]
+                normalized_tf * idf * rank_weights[doc_id]
             )
 
     best = term_scores.most_common(expansion_terms)
