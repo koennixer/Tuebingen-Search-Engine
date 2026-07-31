@@ -83,9 +83,30 @@ def normalize_for_matching(text: str) -> str:
 
 NORMALIZED_GERMAN_STOPWORDS = {normalize_for_matching(w) for w in GERMAN_STOPWORDS}
 
+IRREGULAR_PLURALS = {
+    "children": "child",
+    "men": "man",
+    "women": "woman",
+    "people": "person",
+    "mice": "mouse",
+    "teeth": "tooth",
+    "feet": "foot",
+    "geese": "goose",
+    "leaves": "leaf",
+    "lives": "life",
+    "wolves": "wolf",
+    "potatoes": "potato",
+    "tomatoes": "tomato",
+    "heroes": "hero",
+}
+
 
 def _singularize(token: str) -> str:
     """Apply conservative plural conflation without an NLP dependency."""
+    if token in ENGLISH_STOPWORDS or token in NORMALIZED_GERMAN_STOPWORDS:
+        return token
+    if token in IRREGULAR_PLURALS:
+        return IRREGULAR_PLURALS[token]
     if len(token) > 5 and token.endswith("ies"):
         return token[:-3] + "y"
     if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes")):
@@ -93,10 +114,11 @@ def _singularize(token: str) -> str:
     if (
         len(token) > 4
         and token.endswith("s")
-        and not token.endswith(("ss", "us", "is"))
+        and not token.endswith(("ss", "us", "is", "ous", "as", "os", "ys"))
     ):
         return token[:-1]
     return token
+
 
 
 def tokenize(text: str) -> list[str]:

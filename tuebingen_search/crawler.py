@@ -197,6 +197,7 @@ class _FallbackHTMLParser(HTMLParser):
         self.anchor_href = ""
         self.anchor_hreflang = ""
         self.anchor_parts: list[str] = []
+        self.base_href = ""
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -219,6 +220,8 @@ class _FallbackHTMLParser(HTMLParser):
                 self.title_parts = [attributes["content"]]
         elif tag == "link" and "canonical" in attributes.get("rel", "").lower():
             self.canonical = attributes.get("href", "")
+        elif tag == "base" and attributes.get("href"):
+            self.base_href = attributes["href"]
         elif tag == "a":
             self.anchor_href = attributes.get("href", "")
             self.anchor_hreflang = attributes.get("hreflang", "")
@@ -264,8 +267,9 @@ def _extract_document_without_bs4(
     parser = _FallbackHTMLParser()
     parser.feed(html)
     links: dict[str, ExtractedLink] = {}
+    page_base = parser.base_href or url
     for raw_url, anchor, hreflang in parser.links:
-        target = canonicalize_url(raw_url, base_url=url)
+        target = canonicalize_url(raw_url, base_url=page_base)
         if not target:
             continue
         language_hint = hreflang.lower().split("-", 1)[0]
@@ -274,10 +278,10 @@ def _extract_document_without_bs4(
             ExtractedLink(target, anchor[:250], language_hint),
         )
     canonical_url = (
-        canonicalize_url(parser.canonical, base_url=url)
+        canonicalize_url(parser.canonical, base_url=page_base)
         if parser.canonical
-        else url
-    ) or url
+        else page_base
+    ) or page_base
     text = re.sub(r"\s+", " ", " ".join(parser.text_parts)).strip()[:40_000]
     return (
         _build_document(
@@ -395,6 +399,8 @@ def extract_document(
             url, html, content_type, status_code
         )
     soup = BeautifulSoup(html, "html.parser")
+    base_tag = soup.find("base", href=True)
+    page_base = str(base_tag["href"]).strip() if base_tag else url
     title_tag = soup.find("meta", property="og:title")
     title = (
         str(_tag_attribute(title_tag, "content", "")).strip()
@@ -413,11 +419,11 @@ def extract_document(
     canonical_tag = soup.select_one('link[rel~="canonical"][href]')
     canonical_url = (
         canonicalize_url(
-            str(_tag_attribute(canonical_tag, "href", "")), base_url=url
+            str(_tag_attribute(canonical_tag, "href", "")), base_url=page_base
         )
         if canonical_tag is not None
-        else url
-    ) or url
+        else page_base
+    ) or page_base
     text = extract_main_text(soup)
     html_tag = soup.find("html")
     html_lang = (
@@ -433,7 +439,7 @@ def extract_document(
             ("javascript:", "mailto:", "tel:", "data:", "#")
         ):
             continue
-        target = canonicalize_url(raw, base_url=url)
+        target = canonicalize_url(raw, base_url=page_base)
         if not target:
             continue
         label = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))[:250]
