@@ -11,7 +11,7 @@
 
 <form method="POST" enctype="multipart/form-data">
     <input type="hidden" name="type" value="query">
-    <input type="hidden" name="show_scores" value ="{{show}}">
+    <input type="hidden" name="show_scores" value="{{ '1' if show_scores else '0' }}">
     <input
         type="text"
         name="query"
@@ -43,10 +43,10 @@
     
     <form style="margin:0;" method="POST">
         <input type="hidden" name="type" value="scores">
-        <input type="hidden" name="show_scores" value="{{not show}}">
+        <input type="hidden" name="show_scores" value="{{ '0' if show_scores else '1' }}">
         <input type="hidden" name="query" value="{{query}}">
         <button type="submit">
-            {% if show %}
+            {% if show_scores %}
                 Hide Scores
             {% else %}
                 Show Scores
@@ -57,7 +57,7 @@
 
 {% for result in results %}
 <a href="{{result.url}}">{{result.title}}</a>
-{% if show %}
+{% if show_scores %}
 <div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
 {% endif %}
 <div style="margin-bottom: 10px;">
@@ -84,7 +84,7 @@
         <div style="margin-top: 10px; margin-left: 15px;">
             {% for result in query_results %}
             <a href="{{result.url}}">{{result.title}}</a>
-            {% if show %}
+            {% if show_scores %}
             <div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
             {% endif %}
             <div style="margin-bottom: 10px;">
