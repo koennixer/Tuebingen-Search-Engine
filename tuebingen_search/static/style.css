@@ -26,3 +26,14 @@ button {
 h1 {
     text-align: center;
 }
+
+.score-metadata {
+    font-size: 0.9em;
+    color: #666;
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+.snippet-text {
+    margin-bottom: 10px;
+}
