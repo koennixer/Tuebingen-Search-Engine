@@ -461,7 +461,7 @@ def extract_document(
 
 
 class CrawlScope:
-    """Bound discovery while permitting links from seed sites to local businesses."""
+    """Bound discovery without whitelisting an entire external website."""
 
     def __init__(
         self,
@@ -475,39 +475,76 @@ class CrawlScope:
         self.max_external_domains = max_external_domains
         self.admitted_hosts: set[str] = set()
 
-    def contains(self, host: str) -> bool:
+    @staticmethod
+    def _matches(host: str, domains: set[str]) -> bool:
         return any(
             _is_host_or_subdomain(host, domain)
-            for domain in self.seed_hosts | self.admitted_hosts
+            for domain in domains
         )
+
+    def is_seed_host(self, host: str) -> bool:
+        return self._matches(host, self.seed_hosts)
+
+    def is_admitted_host(self, host: str) -> bool:
+        return self._matches(host, self.admitted_hosts)
+
+    def contains(self, host: str) -> bool:
+        return self.is_seed_host(host) or self.is_admitted_host(host)
 
     def admit_link(
         self,
         link: ExtractedLink,
         *,
+        source_host: str,
         source_relevant: bool,
+        source_english: bool,
         source_depth: int,
     ) -> bool:
-        host = _host(link.url)
-        if not host:
+        target_host = _host(link.url)
+        if not target_host:
             return False
-        if self.contains(host):
+
+        # Seed websites retain their normal bounded traversal behavior.
+        if self.is_seed_host(target_host):
             return True
+
+        link_relevant = is_tuebingen_related(
+            link.url,
+            link.anchor,
+            "",
+        )
+
+        english_hint = (
+            link.language_hint == "en"
+            or bool(ENGLISH_LINK_HINT.search(f"{link.url} {link.anchor}"))
+        )
+
+        # An admitted external host is not completely whitelisted.
+        if self.is_admitted_host(target_host):
+            return link_relevant or (
+                source_relevant
+                and not source_english
+                and english_hint
+            )
+
+        # Only a relevant page on a supplied seed host may introduce
+        # another external domain.
         if (
             not self.allow_external
+            or not self.is_seed_host(source_host)
             or not source_relevant
             or source_depth > 2
             or len(self.admitted_hosts) >= self.max_external_domains
             or any(
-                _is_host_or_subdomain(host, blocked)
+                _is_host_or_subdomain(target_host, blocked)
                 for blocked in BLOCKED_DISCOVERY_HOSTS
             )
         ):
             return False
-        # Links directly from a relevant seed/aggregator page are allowed as
-        # candidate business sites. Their pages must still pass language and
-        # Tübingen relevance checks before indexing.
-        self.admitted_hosts.add(host)
+
+        # Admit this first linked URL. Further links on the same domain
+        # must satisfy the checks above.
+        self.admitted_hosts.add(target_host)
         return True
 
 
@@ -786,9 +823,13 @@ def crawl(
                         ):
                             continue
                         if not scope.admit_link(
-                            link, source_relevant=page_relevant, source_depth=depth
+                            link,
+                            source_host=_host(final_url),
+                            source_relevant=page_relevant,
+                            source_english=page_english,
+                            source_depth=depth,
                         ):
-                            continue
+                           continue
                         stats["discovered"] += add_to_frontier(
                             conn,
                             [link.url],
