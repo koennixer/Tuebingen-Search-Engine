@@ -5,6 +5,22 @@ body {
     padding: 20px;
 }
 
+/*FIXME make background picture integration look nice or remove it entirely*/
+/* .heading{
+    height: auto;
+    background-image: url("pictures/Neckarfront_Tuebingen_August_2013_cropped.jpg");
+    background-repeat: no-repeat;
+    background-position: center bottom;
+    background-size: cover;
+} */
+
+.logo {
+    display: block;
+    width: clamp(200px, 40vw, 600px);
+    height: auto;
+    margin: 0 auto;
+}
+
 .search-form {
     display: flex;
     align-items: center;
@@ -15,11 +31,19 @@ input[type=text] {
     flex-grow: 1;
     padding: 10px;
     font-size: 18px;
+    background-color: #f8f9fa;
+    border: 1px solid #158466;
+    border-radius: 4px;
 }
 
 button {
     padding: 10px 20px;
     font-size: 18px;
+    background-color: #f8f9fa;
+    color: #158466;
+    border: 1px solid #158466;
+    border-radius: 4px;
+    cursor: pointer;
 }
 
 .result {
@@ -30,6 +54,11 @@ button {
 
 h1 {
     text-align: center;
+}
+
+h3 {
+    text-align: center;
+    color: #158466;
 }
 
 .score-metadata {
@@ -76,17 +105,6 @@ h1 {
     margin: 0;
 }
 
-.secondary-btn {
-    background-color: #f8f9fa;
-    color: #007bff;
-    border: 1px solid #007bff;
-    padding: 6px 12px;
-    font-size: 14px;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-left: auto;
-}
-
 .secondary-btn:hover {
     background-color: #e2e6ea;
 }
@@ -102,6 +120,7 @@ h1 {
 .result-title {
     font-size: 1.1em;
     font-weight: bold;
+    color: #158466;
 }
 
 .batch-actions {
