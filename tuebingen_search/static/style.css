@@ -5,14 +5,19 @@ body {
     padding: 20px;
 }
 
+.search-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 input[type=text] {
-    width: 80%;
+    flex-grow: 1;
     padding: 10px;
     font-size: 18px;
 }
 
 button {
-    margin-left: auto;
     padding: 10px 20px;
     font-size: 18px;
 }
@@ -25,4 +30,81 @@ button {
 
 h1 {
     text-align: center;
+}
+
+.score-metadata {
+    font-size: 0.9em;
+    color: #666;
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+.snippet-text {
+    margin-bottom: 10px;
+}
+
+.reading-time {
+    color: #888;
+    font-size: 0.85em;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.full-width-hr {
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+    width: 100vw;
+    border: 0;
+    border-top: 1px solid #ddd;
+    margin-bottom: 20px;
+}
+
+.results-header-container, .batch-results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 15px;
+    margin-bottom: 10px;
+}
+
+.results-header-container h2, .batch-results-header h2 {
+    margin: 0;
+}
+
+.scores-form {
+    margin: 0;
+}
+
+.secondary-btn {
+    background-color: #f8f9fa;
+    color: #007bff;
+    border: 1px solid #007bff;
+    padding: 6px 12px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.secondary-btn:hover {
+    background-color: #e2e6ea;
+}
+
+.result-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    gap: 15px;
+}
+
+.result-title {
+    font-size: 1.1em;
+    font-weight: bold;
+}
+
+.batch-actions {
+    display: flex;
+    gap: 10px;
 }

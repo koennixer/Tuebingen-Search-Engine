@@ -43,6 +43,7 @@ class SearchResult:
     expansion_terms: tuple[str, ...] = ()
     score_components: dict[str, float] = field(default_factory=dict)
     why: str = ""
+    reading_time_mins: int = 1
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class SearchResult:
             "title": self.title,
             "score": self.score,
             "snippet": self.snippet,
+            "reading_time_mins": self.reading_time_mins,
             "bm25_score": self.bm25_score,
             "expanded_score": self.expanded_score,
             "semantic_score": self.semantic_score,

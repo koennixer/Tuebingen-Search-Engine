@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>TüSearch</title>
     <link rel="stylesheet" href="../static/style.css">
@@ -7,95 +8,117 @@
 
 <body>
 
-<h1>Tübingen Search Machine</h1>
+    <h1>Tübingen Search Machine</h1>
 
-<form method="POST" enctype="multipart/form-data">
-    <input type="hidden" name="type" value="query">
-    <input type="hidden" name="show_scores" value ="{{show}}">
-    <input
-        type="text"
-        name="query"
-        id="search_query"
-        placeholder="Search..."
-        value="{{ query }}"
-        autofocus>
+    <form class="search-form" method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="type" value="query">
+        <input type="hidden" name="show_scores" value="{{ '1' if show_scores else '0' }}">
+        <input type="text" name="query" id="search_query" placeholder="Search..." value="{{ query }}" autofocus>
 
-    <label for="batch_file" style="cursor:pointer; font-size:1.2em; padding: 0 5px;" title="Upload Batch Queries File">📎</label>
-    <input type="file" name="batch_file" id="batch_file" style="display:none;" accept=".tsv,.txt">
+        <label for="batch_file" style="cursor:pointer; font-size:1.2em; padding: 0 5px;"
+            title="Upload Batch Queries File">📎</label>
+        <input type="file" name="batch_file" id="batch_file" style="display:none;" accept=".tsv,.txt">
 
-    <button type="submit" id="search_button">Search</button>
-</form>
-
-<script>
-    document.getElementById('batch_file').addEventListener('change', function(e) {
-        if (e.target.files.length > 0) {
-            document.getElementById('search_query').placeholder = e.target.files[0].name + " selected";
-            document.getElementById('search_button').textContent = "Run Batch";
-        }
-    });
-</script>
-
-<hr>
-
-{% if results %}
-<div style="display: flex; align-items: center; gap: 10px;">
-    <h2 style="margin: 0;">Results</h2>
-    
-    <form style="margin:0;" method="POST">
-        <input type="hidden" name="type" value="scores">
-        <input type="hidden" name="show_scores" value="{{not show}}">
-        <input type="hidden" name="query" value="{{query}}">
-        <button type="submit">
-            {% if show %}
-                Hide Scores
-            {% else %}
-                Show Scores
-            {% endif %}
-        </button>
+        <button type="submit" id="search_button">Search</button>
     </form>
-</div>
 
-{% for result in results %}
-<a href="{{result.url}}">{{result.title}}</a>
-{% if show %}
-<div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
-{% endif %}
-<div style="margin-bottom: 10px;">
-    {{result.snippet}}
-</div>
-{% endfor %}
-{% endif %}
+    <script>
+        document.getElementById('batch_file').addEventListener('change', function (e) {
+            if (e.target.files.length > 0) {
+                document.getElementById('search_query').placeholder = e.target.files[0].name + " selected";
+                document.getElementById('search_button').textContent = "Run Batch";
+            }
+        });
+    </script>
 
-{% if batch_results %}
-<div style="display: flex; align-items: center; justify-content: space-between; margin-top: 15px; margin-bottom: 10px;">
-    <h2 style="margin: 0;">Batch Results</h2>
-    
-    <form method="POST" action="/download" style="margin: 0;">
-        <input type="hidden" name="tsv_data" value="{{ tsv_output }}">
-        <button type="submit">Download TSV</button>
-    </form>
-</div>
+    <hr class="full-width-hr">
 
-<div>
-    {% for query_id, query_text in queries %}
-    {% set query_results = batch_results.get(query_id, []) %}
-    <details style="margin-bottom: 10px;">
-        <summary style="cursor: pointer; font-weight: bold;">Query: {{query_id}} - {{query_text}} ({{query_results|length}} results)</summary>
-        <div style="margin-top: 10px; margin-left: 15px;">
-            {% for result in query_results %}
-            <a href="{{result.url}}">{{result.title}}</a>
-            {% if show %}
-            <div>Score: {{result.score}}, BM25 Score: {{result.bm25_score}}, Expanded Score: {{result.expanded_score}}</div>
-            {% endif %}
-            <div style="margin-bottom: 10px;">
-                {{result.snippet}}
-            </div>
-            {% endfor %}
-        </div>
-    </details>
+    {% if results %}
+    <div class="results-header-container">
+        <h2>Results</h2>
+
+        <button type="button" class="secondary-btn toggle-scores-btn" onclick="toggleScores()">Show Scores</button>
+    </div>
+
+    {% for result in results %}
+    <div class="result-header">
+        <a class="result-title" href="{{result.url}}">{{result.title}}</a>
+        <span class="reading-time">⏱️ {{result.reading_time_mins}} min read</span>
+    </div>
+    <div class="score-metadata" style="display: none;">
+        <strong>Score:</strong> {{ "%.4f"|format(result.score) }} &nbsp;|&nbsp;
+        <strong>BM25:</strong> {{ "%.4f"|format(result.bm25_score) }} &nbsp;|&nbsp;
+        <strong>Expanded:</strong> {{ "%.4f"|format(result.expanded_score) }}
+    </div>
+    <div class="snippet-text">
+        {{result.snippet}}
+    </div>
     {% endfor %}
-</div>
-{% endif %}
+    {% endif %}
+
+    {% if batch_results %}
+    <div class="batch-results-header">
+        <h2>Batch Results</h2>
+
+        <div class="batch-actions">
+            <button type="button" class="secondary-btn toggle-scores-btn" onclick="toggleScores()">Show Scores</button>
+
+            <form class="scores-form" method="POST" action="/download">
+                <input type="hidden" name="tsv_data" value="{{ tsv_output }}">
+                <button type="submit" class="secondary-btn">Download TSV</button>
+            </form>
+        </div>
+    </div>
+
+    <div>
+        {% for query_id, query_text in queries %}
+        {% set query_results = batch_results.get(query_id, []) %}
+        <details style="margin-bottom: 10px;">
+            <summary style="cursor: pointer; font-weight: bold;">Query: {{query_id}} - {{query_text}}
+                ({{query_results|length}} results)</summary>
+            <div style="margin-top: 10px; margin-left: 15px;">
+                {% for result in query_results %}
+                <div class="result-header">
+                    <a class="result-title" href="{{result.url}}">{{result.title}}</a>
+                    <span class="reading-time">⏱️ {{result.reading_time_mins}} min read</span>
+                </div>
+                <div class="score-metadata" style="display: none;">
+                    <strong>Score:</strong> {{ "%.4f"|format(result.score) }} &nbsp;|&nbsp;
+                    <strong>BM25:</strong> {{ "%.4f"|format(result.bm25_score) }} &nbsp;|&nbsp;
+                    <strong>Expanded:</strong> {{ "%.4f"|format(result.expanded_score) }}
+                </div>
+                <div class="snippet-text">
+                    {{result.snippet}}
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+    {% endif %}
+    <script>
+        const query = {{ query | tojson | safe }};
+        const queryWords = query.split(/\s+/).filter(w => w.length > 2);
+        if (queryWords.length > 0) {
+            const escapedWords = queryWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const regex = new RegExp('\\b(' + escapedWords.join('|') + ')[a-z]*\\b', 'gi');
+            document.querySelectorAll('.snippet-text').forEach(el => {
+                el.innerHTML = el.innerHTML.replace(regex, '<strong>$1</strong>');
+            });
+        }
+
+        let scoresVisible = false;
+        function toggleScores() {
+            scoresVisible = !scoresVisible;
+            document.querySelectorAll('.score-metadata').forEach(el => {
+                el.style.display = scoresVisible ? 'block' : 'none';
+            });
+            document.querySelectorAll('.toggle-scores-btn').forEach(btn => {
+                btn.textContent = scoresVisible ? 'Hide Scores' : 'Show Scores';
+            });
+        }
+    </script>
 
 </body>
+
 </html>

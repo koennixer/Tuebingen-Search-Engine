@@ -591,6 +591,7 @@ def retrieve(
                     snippet=snippet(
                         str(doc["description"] or doc["text"]), terms
                     ),
+                    reading_time_mins=max(1, len(str(doc["text"]).split()) // 250),
                     bm25_score=round(first_stage.get(doc_id, 0.0), 6),
                     expanded_score=round(
                         expanded_stage.get(doc_id, 0.0), 6
