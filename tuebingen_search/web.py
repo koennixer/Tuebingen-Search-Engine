@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any
+import webbrowser
 
 from .presentation import domain_facets, intent_facets
 from .retrieval import query_analysis, retrieve, retrieve_batch_list
@@ -225,7 +227,9 @@ def start_web_interface(
     host: str, port: int, index_path: str | Path = "tuebingen_index.sqlite3"
 ) -> None:
     application = create_app(index_path)
-    print(f"Starting Tübingen Search on http://{host}:{port}")
+    url = f"http://{host}:{port}"
+    print(f"Starting Tübingen Search on {url}")
+    threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     application.run(
         host=host, port=port, debug=False, use_reloader=False, threaded=True
     )

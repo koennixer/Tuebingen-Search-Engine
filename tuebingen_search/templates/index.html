@@ -20,7 +20,7 @@
             <input type="text" name="query" id="search_query" placeholder="Search..." value="{{ query }}" autofocus>
 
             <label for="batch_file" style="cursor:pointer; font-size:1.2em; padding: 0 5px;"
-                title="Upload Batch Queries File">🡹</label>
+                title="Upload Batch Queries File">&#x1F4E4;&#xFE0E;</label>
             <input type="file" name="batch_file" id="batch_file" style="display:none;" accept=".tsv,.txt">
 
             <button type="submit" id="search_button">Search</button>
@@ -29,8 +29,16 @@
         <script>
             document.getElementById('batch_file').addEventListener('change', function (e) {
                 if (e.target.files.length > 0) {
+                    document.getElementById('search_query').value = "";
                     document.getElementById('search_query').placeholder = e.target.files[0].name + " selected";
                     document.getElementById('search_button').textContent = "Run Batch";
+                }
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && document.getElementById('batch_file').files.length > 0) {
+                    e.preventDefault();
+                    document.querySelector('.search-form').submit();
                 }
             });
         </script>
