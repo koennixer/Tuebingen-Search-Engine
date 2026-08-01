@@ -81,6 +81,8 @@ def _generate_tsv_output(
 def _empty_context() -> dict[str, Any]:
     return {
         "query": "",
+        "queries": [],
+        "batch_results": {},
         "results": [],
         "domain_facets": [],
         "intent_facets": [],
@@ -149,6 +151,8 @@ def create_app(index_path: str | Path = "tuebingen_index.sqlite3"):
                 context["tsv_output"] = _generate_tsv_output(
                     queries, batch_results
                 )
+                context["queries"] = queries
+                context["batch_results"] = batch_results
                 context["batch_summary"] = [
                     {
                         "id": query_id,
