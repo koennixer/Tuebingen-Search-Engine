@@ -189,7 +189,7 @@ def explain_result(query: str, result: ResultLike) -> str:
 def interactive_search(index: str | Path, *, page_size: int = 10, top_k: int = 100) -> None:
     """Open the paged interactive search interface."""
     print(subheading("Tübingen Search"))
-    print("Type a query, or 'quit' to exit.")
+    print("Type a query, or 'quit'/'q'/'exit' to exit.")
 
     while True:
         query = input("\nsearch> ").strip()

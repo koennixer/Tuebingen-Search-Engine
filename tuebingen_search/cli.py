@@ -122,14 +122,17 @@ Commands
   crawl 500 --verbose                 crawl with detailed progress diagnostics
   crawl 500 --no-progress             crawl without a progress display
   crawl 500 --max-processed 3000      stop after too many filtered pages
+  crawl 500 --per-host-limit 100      avoid one website dominating a crawl run
+  crawl 500 --max-links-per-page 80   cap newly queued links per fetched page
   <your query>                        search directly, e.g. tübingen attractions
   query <your query>                  same as typing the query directly
   ui                                  open the paged search interface
   web                                 start the web search interface
-  batch <queries.tsv> <results.tsv>   write assignment evaluation output
+  batch <queries.tsv> <results.tsv>   batch querying with specified in-and output files
   stats                               show index statistics
   index <path.sqlite3>                switch/create the active index file
-  quit                                exit
+  quit/q/exit                         exit
+  help                                show this page
 
 Examples
   crawl 500
