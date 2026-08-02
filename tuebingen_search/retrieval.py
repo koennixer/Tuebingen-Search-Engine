@@ -442,6 +442,8 @@ def _why_text(
         reasons.append("lexically relevant to the query")
     return "; ".join(reasons).capitalize() + "."
 
+def squash(x: float) -> float:
+    return x / (1.0 + x)
 
 def retrieve(
     query: str,
@@ -536,14 +538,43 @@ def retrieve(
                 "authority": authority_norm.get(doc_id, 0.0),
             }
             component_maps[doc_id] = components
-            final_scores[doc_id] = (
+            """final_scores[doc_id] = (
                 0.18 * components["bm25f"]
                 + 0.54 * components["feedback"]
+                + 0.3 * components["feedback"]
                 + 0.12 * components["semantic"]
                 + 0.08 * components["intent"]
                 + 0.06 * components["metadata"]
                 + 0.02 * components["authority"]
+            )"""
+            """final_scores[doc_id] = (
+                0.45 * components["bm25f"] +
+                0.18 * components["feedback"] +
+                0.15 * components["semantic"] +
+                0.08 * components["intent"] +
+                0.08 * components["metadata"] +
+                0.04 * components["authority"]
+            )"""
+
+            final_scores[doc_id] = (
+                0.50 * components["bm25f"] +
+                0.16 * squash(components["feedback"]) +
+                0.14 * squash(components["semantic"]) +
+                0.08 * components["intent"] +
+                0.08 * components["metadata"] +
+                0.04 * components["authority"]
             )
+
+            """final_scores[doc_id] = (
+                0.55 * components["bm25f"] +
+                0.15 * components["feedback"] +
+                0.12 * components["semantic"] +
+                0.08 * components["intent"] +
+                0.06 * components["metadata"] +
+                0.04 * components["authority"]
+            )
+            if len(terms) <= 2:
+                final_scores[doc_id] -= 0.10 * components["feedback"]"""
 
         selected = _diversified_order(
             final_scores, metadata, top_k=top_k
