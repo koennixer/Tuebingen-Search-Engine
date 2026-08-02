@@ -68,7 +68,7 @@ class SearchShell:
     def run(self) -> None:
         print(heading("Tübingen Search CLI"))
         print(table([("Current index", self.index)]))
-        print("Type 'help' for commands. Type a normal search query to search.")
+        print("Type 'help' or '?' for commands. Type your search query to search.")
 
         while True:
             try:
