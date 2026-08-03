@@ -13,7 +13,6 @@
         <h1><img src="../static/pictures/TueSearch_Logo_1.png" alt="TüSearch" class="logo"></h1>
         <h3>... Your Search Machine for everything Tübingen related</h3>
 
-
         <form class="search-form" method="POST" enctype="multipart/form-data">
             <input type="hidden" name="type" value="query">
             <input type="hidden" name="show_scores" value="{{ '1' if show_scores else '0' }}">
@@ -22,8 +21,10 @@
             <label for="batch_file" style="cursor:pointer; font-size:1.2em; padding: 0 5px;"
                 title="Upload Batch Queries File">&#x1F4E4;&#xFE0E;</label>
             <input type="file" name="batch_file" id="batch_file" style="display:none;" accept=".tsv,.txt">
-
-            <button type="submit" id="search_button">Search</button>
+            <div class="search-submit">
+                <button type="submit" id="search_button" name="button" value="search">Search</button>
+                <button type="submit" id="lucky_button" name="button" value="lucky">I feel lucky</button>
+            </div>
         </form>
 
         <script>

@@ -18,6 +18,7 @@ try:
         jsonify,
         render_template,
         request,
+        redirect,
     )
 except ImportError:
     Flask = None
@@ -29,7 +30,6 @@ except ImportError:
 
 MAX_BATCH_BYTES = 1_000_000
 MAX_QUERY_CHARS = 300
-
 
 def _parse_uploaded_queries(stream) -> list[tuple[str, str]]:
     """Parse and validate an assignment-style query stream."""
@@ -131,11 +131,14 @@ def create_app(index_path: str | Path = "tuebingen_index.sqlite3"):
         if request.method == "GET":
             query = request.args.get("q", "").strip()
             show_scores = request.args.get("scores") == "1"
+            button = "search"
         else:
             query = request.form.get("query", "").strip()
             show_scores = request.form.get("show_scores") == "1"
+            button = request.form.get("button")
         context["query"] = query
         context["show_scores"] = show_scores
+        context["button"] = button
 
         try:
             batch_file = (
@@ -175,6 +178,12 @@ def create_app(index_path: str | Path = "tuebingen_index.sqlite3"):
                 context["domain_facets"] = domain_facets(results)
                 context["intent_facets"] = intent_facets(results)
                 context["analysis"] = query_analysis(query)
+
+                if button == "lucky":
+                    return redirect(results[0]["url"])
+            elif not query:
+                if button == "lucky":
+                    return redirect("https://www.youtube.com/watch?v=5xBSrqpiiCk&start_radio=1")
         except (ValueError, UnicodeDecodeError) as exc:
             context["error"] = str(exc)
         return render_template("index.html", **context)

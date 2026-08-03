@@ -6,13 +6,14 @@ body {
 }
 
 /*FIXME make background picture integration look nice or remove it entirely*/
-/* .heading{
-    height: auto;
+.heading{
+    margin-bottom: 3rem;
+    /* height: auto;
     background-image: url("pictures/Neckarfront_Tuebingen_August_2013_cropped.jpg");
     background-repeat: no-repeat;
     background-position: center bottom;
-    background-size: cover;
-} */
+    background-size: cover; */
+}
 
 .logo {
     display: block;
@@ -25,6 +26,10 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.search-submit {
+    text-align: center;
 }
 
 input[type=text] {
