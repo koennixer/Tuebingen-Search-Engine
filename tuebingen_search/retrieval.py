@@ -33,6 +33,7 @@ from .text import (
     snippet,
     tokenize,
 )
+from .vocabulary import load_vocabulary
 
 try:
     from sklearn.decomposition import TruncatedSVD
@@ -617,6 +618,18 @@ def retrieve(
         return [result.as_dict() for result in results]
     finally:
         conn.close()
+def suggest_correction(query: str, index: str | Path) -> str | None:
+    """Return a spelling correction suggestion if one is found, else None."""
+    sym_spell = load_vocabulary(index)
+    if not sym_spell:
+        return None
+    query_lower = query.lower()
+    suggestions = sym_spell.lookup_compound(query_lower, max_edit_distance=2)
+    if suggestions:
+        best = suggestions[0].term
+        if best != query_lower:
+            return best
+    return None
 
 
 def load_query_file(path: str | Path) -> list[tuple[str, str]]:

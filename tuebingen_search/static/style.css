@@ -132,3 +132,20 @@ h3 {
     display: flex;
     gap: 10px;
 }
+
+.suggestion {
+    position: absolute;
+    margin-top: 15px;
+    margin-bottom: 0;
+}
+
+.suggestion a {
+    color: #158466;
+    font-weight: bold;
+    font-style: italic;
+    text-decoration: none;
+}
+
+.no-results {
+    margin-top: 20px;
+}

@@ -8,7 +8,7 @@ from typing import Any
 import webbrowser
 
 from .presentation import domain_facets, intent_facets
-from .retrieval import query_analysis, retrieve, retrieve_batch_list
+from .retrieval import query_analysis, retrieve, retrieve_batch_list, suggest_correction
 from .storage import index_statistics
 
 try:
@@ -94,6 +94,7 @@ def _empty_context() -> dict[str, Any]:
         "show_scores": False,
         "error": "",
         "stats": {},
+        "suggestion": None,
     }
 
 
@@ -178,6 +179,8 @@ def create_app(index_path: str | Path = "tuebingen_index.sqlite3"):
                 context["domain_facets"] = domain_facets(results)
                 context["intent_facets"] = intent_facets(results)
                 context["analysis"] = query_analysis(query)
+                
+                context["suggestion"] = suggest_correction(query, application.config["SEARCH_INDEX"])
 
                 if button == "lucky":
                     return redirect(results[0]["url"])

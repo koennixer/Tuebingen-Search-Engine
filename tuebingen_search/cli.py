@@ -29,6 +29,7 @@ from .presentation import (
 from .web import start_web_interface
 from .retrieval import retrieve
 from .storage import export_documents_jsonl, index_statistics
+from .vocabulary import DEFAULT_MIN_FREQUENCY, build_vocabulary, get_vocabulary_info
 
 
 DEFAULT_INDEX = "tuebingen_index.sqlite3"
@@ -111,6 +112,8 @@ class SearchShell:
             interactive_search(self.index)
         elif command == "web":
             self.web(args)
+        elif command == "vocab":
+            self.vocab(args)
         else:
             self.query(line)
 
@@ -130,6 +133,9 @@ Commands
   web                                 start the web search interface
   batch <queries.tsv> <results.tsv>   batch querying with specified in-and output files
   stats                               show index statistics
+  vocab                               show custom dictionary metadata
+  vocab --refresh                     rebuild custom dictionary from corpus
+  vocab --min-frequency <N>           rebuild dictionary, discarding words occurring < N times
   index <path.sqlite3>                switch/create the active index file
   quit/q/exit                         exit
   help                                show this page
@@ -206,6 +212,44 @@ Examples
             return
         start_web_interface(options.host, options.port, self.index)
 
+    def vocab(self, args: list[str]) -> None:
+        try:
+            options = parse_shell_vocab_args(args)
+        except ValueError as exc:
+            print(exc)
+            return
+
+        info = get_vocabulary_info(self.index)
+        
+        # If user did not provide --min-frequency but provided --refresh, use the last min_frequency
+        if options.min_frequency is None:
+            min_frequency = info.get("min_frequency", DEFAULT_MIN_FREQUENCY) if info else DEFAULT_MIN_FREQUENCY
+        else:
+            min_frequency = options.min_frequency
+
+        if options.refresh or options.min_frequency is not None:
+            build_vocabulary(self.index, min_frequency=min_frequency, refresh_counts=options.refresh)
+            print()
+            info = get_vocabulary_info(self.index)
+        if not info:
+            print("Vocabulary not built. Run 'vocab --refresh' to build it.")
+        else:
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(info.get("created_at", ""))
+                created_at_fmt = dt.strftime("%d %b %Y, %H:%M %Z")
+            except ValueError:
+                created_at_fmt = info.get("created_at", "")
+
+            print(heading("Vocabulary Summary"))
+            print(table([
+                ("Created At", created_at_fmt),
+                ("Min Frequency", str(info.get('min_frequency', DEFAULT_MIN_FREQUENCY))),
+                ("Vocabulary Size", f"{info.get('word_count', 0):,} words"),
+                ("SymSpell Vocabulary Size", f"{info.get('symspell_size', 0):,} entries"),
+                ("Generated From Data Sized", f"{info.get('data_size_bytes', 0) / 1024 / 1024:.2f} MB")
+            ], key_width=26))
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the top-level command parser."""
@@ -220,6 +264,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     web_parser = subparsers.add_parser("web", help="start the web search interface")
     web_parser.add_argument("--host", default="127.0.0.1", help="host to bind to")
     web_parser.add_argument("--port", type=int, default=5000, help="port to bind to")
+
+    vocab_parser = subparsers.add_parser("vocab", help="manage custom spell-checking vocabulary")
+    vocab_parser.add_argument("--refresh", action="store_true", help="rebuild dictionary from corpus")
+    vocab_parser.add_argument("--min-frequency", type=int, default=DEFAULT_MIN_FREQUENCY, help=f"Set the minimum occurrence frequency required for a word to be included in the spelling dictionary (default: {DEFAULT_MIN_FREQUENCY})")
 
     shell_parser = subparsers.add_parser("shell", help="open the friendly command shell")
     shell_parser.add_argument("index_override", nargs="?", help="optional SQLite index path")
@@ -317,6 +365,21 @@ def main(argv: list[str] | None = None) -> int:
         SearchShell(args.index_override or args.index).run()
         return 0
 
+    if args.command == "vocab":
+        shell = SearchShell(args.index)
+        
+        vocab_args = []
+        if args.refresh:
+            vocab_args.append("--refresh")
+        
+        info = get_vocabulary_info(args.index)
+        default_freq = info.get("min_frequency", DEFAULT_MIN_FREQUENCY) if info else DEFAULT_MIN_FREQUENCY
+        if args.min_frequency != default_freq:
+            vocab_args.extend(["--min-frequency", str(args.min_frequency)])
+            
+        shell.vocab(vocab_args)
+        return 0
+
     if args.command == "crawl":
         max_pages, seeds = normalize_crawl_targets(args.max_pages, args.seeds)
         print(heading("Crawl"))
@@ -394,6 +457,16 @@ def parse_shell_web_args(args: list[str]) -> argparse.Namespace:
         return parser.parse_args(args)
     except SystemExit as exc:
         raise ValueError("Use: web [--host IP] [--port PORT]") from exc
+
+
+def parse_shell_vocab_args(args: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="vocab", add_help=False)
+    parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--min-frequency", type=int, default=None)
+    try:
+        return parser.parse_args(args)
+    except SystemExit as exc:
+        raise ValueError("Use: vocab [--refresh] [--min-frequency N]") from exc
 
 
 def parse_shell_crawl_args(args: list[str]) -> argparse.Namespace:

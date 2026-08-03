@@ -36,16 +36,30 @@
                 }
             });
 
-            document.addEventListener('keydown', function(e) {
+            document.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter' && document.getElementById('batch_file').files.length > 0) {
                     e.preventDefault();
                     document.querySelector('.search-form').submit();
                 }
             });
         </script>
+
+        {% if suggestion %}
+        <p class="suggestion">
+            Did you mean: <a href="/?q={{ suggestion }}">{{ suggestion }}</a>
+        </p>
+        {% endif %}
     </section>
 
     <hr class="full-width-hr">
+
+
+
+    {% if query and not batch_results and not results %}
+    <p class="no-results">
+        No results found for query: <strong><em>{{ query }}</em></strong>
+    </p>
+    {% endif %}
 
     {% if results %}
     <div class="results-header-container">
