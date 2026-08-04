@@ -266,7 +266,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     vocab_parser = subparsers.add_parser("vocab", help="manage custom spell-checking vocabulary")
     vocab_parser.add_argument("--refresh", action="store_true", help="rebuild dictionary from corpus")
-    vocab_parser.add_argument("--min-frequency", type=int, default=DEFAULT_MIN_FREQUENCY, help=f"Set the minimum occurrence frequency required for a word to be included in the spelling dictionary (default: {DEFAULT_MIN_FREQUENCY})")
+    vocab_parser.add_argument("--min-frequency", type=int, default=None, help=f"Set the minimum occurrence frequency required for a word to be included in the spelling dictionary (default: {DEFAULT_MIN_FREQUENCY})")
 
     shell_parser = subparsers.add_parser("shell", help="open the friendly command shell")
     shell_parser.add_argument("index_override", nargs="?", help="optional SQLite index path")
@@ -371,9 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.refresh:
             vocab_args.append("--refresh")
         
-        info = get_vocabulary_info(args.index)
-        default_freq = info.get("min_frequency", DEFAULT_MIN_FREQUENCY) if info else DEFAULT_MIN_FREQUENCY
-        if args.min_frequency != default_freq:
+        if args.min_frequency is not None:
             vocab_args.extend(["--min-frequency", str(args.min_frequency)])
             
         shell.vocab(vocab_args)
