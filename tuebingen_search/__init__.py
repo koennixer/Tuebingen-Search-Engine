@@ -5,11 +5,13 @@ from .evaluation import evaluate_run
 from .models import Document, SearchResult
 from .presentation import batch, interactive_search, run_batch_file
 from .retrieval import load_query_file, query_analysis, retrieve, retrieve_batch
+from .storage import DEFAULT_INDEX_PATH
 from .storage import add_document as index
 from .storage import export_documents_jsonl, index_statistics
 from .vocabulary import DEFAULT_MIN_FREQUENCY, build_vocabulary, get_vocabulary_info, load_vocabulary
 
 __all__ = [
+    "DEFAULT_INDEX_PATH",
     "DEFAULT_MIN_FREQUENCY",
     "Document",
     "SearchResult",

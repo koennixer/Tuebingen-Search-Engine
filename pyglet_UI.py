@@ -13,6 +13,7 @@ import webbrowser
 import pyglet
 from pyglet.window import key
 
+from tuebingen_search import DEFAULT_INDEX_PATH
 from tuebingen_search.retrieval import retrieve
 
 
@@ -95,7 +96,7 @@ class SearchWindow(pyglet.window.Window):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Desktop UI for Tübingen Search")
-    parser.add_argument("--index", default="tuebingen_index.sqlite3")
+    parser.add_argument("--index", default=DEFAULT_INDEX_PATH)
     args = parser.parse_args()
     SearchWindow(args.index)
     pyglet.app.run()

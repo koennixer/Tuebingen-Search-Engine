@@ -26,6 +26,7 @@ VOCAB_COUNTS_PKL = "tuebingen_vocab_counts.pkl"
 SURFACE_TOKEN_RE = re.compile(r"\w+")
 
 DEFAULT_MIN_FREQUENCY = 3
+DEFAULT_MIN_WORD_LENGTH = 2
 
 
 class VocabProgress:
@@ -67,7 +68,7 @@ class VocabProgress:
 def build_vocabulary(index_path: str | Path, min_frequency: int = DEFAULT_MIN_FREQUENCY, refresh_counts: bool = False) -> None:
     """Extract surface forms from the corpus, build a SymSpell dictionary, and serialize it."""
     index_path = Path(index_path)
-    vocab_dir = index_path.parent / ".vocab"
+    vocab_dir = Path(".vocab")
     vocab_dir.mkdir(parents=True, exist_ok=True)
     pkl_path = vocab_dir / VOCAB_PKL
     meta_path = vocab_dir / VOCAB_META
@@ -104,7 +105,7 @@ def build_vocabulary(index_path: str | Path, min_frequency: int = DEFAULT_MIN_FR
     print(f"Applying frequency threshold N={min_frequency}")
     filtered_counts = {
         word: count for word, count in word_counts.items() 
-        if count >= min_frequency and len(word) >= 3
+        if count >= min_frequency and len(word) >= DEFAULT_MIN_WORD_LENGTH
     }
 
     sym_spell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
@@ -133,7 +134,7 @@ def build_vocabulary(index_path: str | Path, min_frequency: int = DEFAULT_MIN_FR
 
 def get_vocabulary_info(index_path: str | Path) -> dict[str, Any] | None:
     """Return the metadata for the current vocabulary if it exists."""
-    meta_path = Path(index_path).parent / ".vocab" / VOCAB_META
+    meta_path = Path(".vocab") / VOCAB_META
     if not meta_path.exists():
         return None
     with open(meta_path, "r", encoding="utf-8") as f:
@@ -142,7 +143,7 @@ def get_vocabulary_info(index_path: str | Path) -> dict[str, Any] | None:
 
 def load_vocabulary(index_path: str | Path) -> SymSpell | None:
     """Load the pre-computed SymSpell dictionary from disk."""
-    pkl_path = Path(index_path).parent / ".vocab" / VOCAB_PKL
+    pkl_path = Path(".vocab") / VOCAB_PKL
     if not pkl_path.exists():
         return None
     with open(pkl_path, "rb") as f:

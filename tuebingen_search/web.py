@@ -9,7 +9,8 @@ import webbrowser
 
 from .presentation import domain_facets, intent_facets
 from .retrieval import query_analysis, retrieve, retrieve_batch_list, suggest_correction
-from .storage import index_statistics
+from .storage import DEFAULT_INDEX_PATH, index_statistics
+from .text import query_terms
 
 try:
     from flask import (
@@ -85,6 +86,7 @@ def _empty_context() -> dict[str, Any]:
         "query": "",
         "queries": [],
         "batch_results": {},
+        "batch_typos": {},
         "results": [],
         "domain_facets": [],
         "intent_facets": [],
@@ -98,7 +100,74 @@ def _empty_context() -> dict[str, Any]:
     }
 
 
-def create_app(index_path: str | Path = "tuebingen_index.sqlite3"):
+def _handle_batch_review_submission(request, context: dict[str, Any], index_path: str | Path):
+    query_ids = request.form.getlist("batch_query_ids")
+    query_texts = request.form.getlist("batch_query_texts")
+    queries = list(zip(query_ids, query_texts))
+    
+    keep_all_original = request.form.get("keep_all_original") == "1"
+    
+    updated_queries = []
+    for query_id, query_text in queries:
+        if keep_all_original or request.form.get(f"keep_original_{query_id}") == "1":
+            updated_queries.append((query_id, query_text))
+        else:
+            corrected_text = request.form.get(f"correction_{query_id}")
+            if corrected_text and corrected_text.strip():
+                updated_queries.append((query_id, corrected_text.strip()))
+            else:
+                updated_queries.append((query_id, query_text))
+    
+    batch_results = retrieve_batch_list(updated_queries, index_path, top_k=100)
+    context["tsv_output"] = _generate_tsv_output(updated_queries, batch_results)
+    context["queries"] = updated_queries
+    context["batch_results"] = batch_results
+    context["batch_summary"] = [
+        {"id": qid, "query": qtext, "count": len(batch_results.get(qid, []))}
+        for qid, qtext in updated_queries
+    ]
+
+
+def _handle_batch_upload(batch_file, context: dict[str, Any], index_path: str | Path):
+    queries = _parse_uploaded_queries(batch_file.stream)
+    batch_results = retrieve_batch_list(queries, index_path, top_k=100)
+    
+    batch_typos = {}
+    for query_id, query_text in queries:
+        suggestion = suggest_correction(query_text, index_path)
+        if suggestion:
+            batch_typos[query_id] = {"original": query_text, "suggestion": suggestion}
+    
+    if batch_typos:
+        context["batch_typos"] = batch_typos
+        context["queries"] = queries
+    else:
+        context["tsv_output"] = _generate_tsv_output(queries, batch_results)
+        context["queries"] = queries
+        context["batch_results"] = batch_results
+        context["batch_summary"] = [
+            {"id": qid, "query": qtext, "count": len(batch_results.get(qid, []))}
+            for qid, qtext in queries
+        ]
+
+
+def _handle_single_query(query: str, button: str | None, context: dict[str, Any], index_path: str | Path) -> str | None:
+    if len(query) > MAX_QUERY_CHARS:
+        raise ValueError("Query is too long")
+    results = retrieve(query, index_path, top_k=100)
+    context["results"] = results
+    context["domain_facets"] = domain_facets(results)
+    context["intent_facets"] = intent_facets(results)
+    context["analysis"] = query_analysis(query)
+    context["suggestion"] = suggest_correction(query, index_path)
+    context["highlight_terms"] = query_terms(query)
+
+    if button == "lucky" and results:
+        return results[0]["url"]
+    return None
+
+
+def create_app(index_path: str | Path = DEFAULT_INDEX_PATH):
     """Create an isolated Flask application for tests and local use."""
     if Flask is None:
         raise RuntimeError(
@@ -147,46 +216,19 @@ def create_app(index_path: str | Path = "tuebingen_index.sqlite3"):
                 if request.method == "POST"
                 else None
             )
-            if batch_file and batch_file.filename:
-                queries = _parse_uploaded_queries(batch_file.stream)
-                batch_results = retrieve_batch_list(
-                    queries,
-                    application.config["SEARCH_INDEX"],
-                    top_k=100,
-                )
-                context["tsv_output"] = _generate_tsv_output(
-                    queries, batch_results
-                )
-                context["queries"] = queries
-                context["batch_results"] = batch_results
-                context["batch_summary"] = [
-                    {
-                        "id": query_id,
-                        "query": query_text,
-                        "count": len(batch_results.get(query_id, [])),
-                    }
-                    for query_id, query_text in queries
-                ]
-            elif query:
-                if len(query) > MAX_QUERY_CHARS:
-                    raise ValueError("Query is too long")
-                results = retrieve(
-                    query,
-                    application.config["SEARCH_INDEX"],
-                    top_k=100,
-                )
-                context["results"] = results
-                context["domain_facets"] = domain_facets(results)
-                context["intent_facets"] = intent_facets(results)
-                context["analysis"] = query_analysis(query)
-                
-                context["suggestion"] = suggest_correction(query, application.config["SEARCH_INDEX"])
+            batch_review_submitted = request.form.get("batch_review_submitted")
 
-                if button == "lucky":
-                    return redirect(results[0]["url"])
-            elif not query:
-                if button == "lucky":
-                    return redirect("https://www.youtube.com/watch?v=5xBSrqpiiCk&start_radio=1")
+            if batch_review_submitted:
+                _handle_batch_review_submission(request, context, application.config["SEARCH_INDEX"])
+                
+            elif batch_file and batch_file.filename:
+                _handle_batch_upload(batch_file, context, application.config["SEARCH_INDEX"])
+            elif query:
+                redirect_url = _handle_single_query(query, button, context, application.config["SEARCH_INDEX"])
+                if redirect_url:
+                    return redirect(redirect_url)
+            elif not query and button == "lucky":
+                return redirect("https://www.youtube.com/watch?v=5xBSrqpiiCk&start_radio=1")
         except (ValueError, UnicodeDecodeError) as exc:
             context["error"] = str(exc)
         return render_template("index.html", **context)
@@ -236,7 +278,7 @@ app = create_app() if Flask is not None else None
 
 
 def start_web_interface(
-    host: str, port: int, index_path: str | Path = "tuebingen_index.sqlite3"
+    host: str, port: int, index_path: str | Path = DEFAULT_INDEX_PATH
 ) -> None:
     application = create_app(index_path)
     url = f"http://{host}:{port}"

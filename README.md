@@ -64,7 +64,7 @@ that are filtered out as non-English or not Tübingen-related. Important options
 
 "index \<path.sqlite3>"
 - switch/create the active index file
-- The default index file is `tuebingen_index.sqlite3`
+- The default index file is `.index/tuebingen_index.sqlite3`
 
 "stats"
 - shows index statistics
@@ -146,7 +146,7 @@ python3 tuebingen_search_engine.py batch queries.tsv results.tsv
 ```
 
 <!-- FIXME do we need this extra explanation, or is the one for index above sufficient and we can just append this as an additional command -->
-The default index file is `tuebingen_index.sqlite3`. To use another one:
+The default index file is `.index/tuebingen_index.sqlite3`. To use another one:
 
 ```bash
 python3 tuebingen_search_engine.py --index my_index.sqlite3
@@ -158,8 +158,8 @@ python3 tuebingen_search_engine.py crawl --index my_index.sqlite3 --max-pages 50
 ```python
 from tuebingen_search import crawl, retrieve, retrieve_batch, batch
 
-crawl(["https://www.tuebingen.de/en/"], "tuebingen_index.sqlite3", max_pages=500)
-results = retrieve("tübingen attractions", "tuebingen_index.sqlite3")
+crawl(["https://www.tuebingen.de/en/"], ".index/tuebingen_index.sqlite3", max_pages=500)
+results = retrieve("tübingen attractions", ".index/tuebingen_index.sqlite3")
 batch({"1": results}, "results.tsv")
 ```
 

@@ -69,6 +69,9 @@ BLOCKED_DISCOVERY_HOSTS = {
 }
 
 
+DEFAULT_MAX_CRAWL_DOCUMENT_CHARS = 40_000
+
+
 @dataclass(frozen=True)
 class ExtractedLink:
     url: str
@@ -360,7 +363,7 @@ def score_url_priority(url: str) -> float:
     return score
 
 
-def extract_main_text(soup: BeautifulSoup, max_chars: int = 40_000) -> str:
+def extract_main_text(soup: BeautifulSoup, max_chars: int = DEFAULT_MAX_CRAWL_DOCUMENT_CHARS) -> str:
     """Extract useful page text while dropping navigation and consent noise."""
     root = (
         soup.select_one("main")

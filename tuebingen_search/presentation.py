@@ -14,6 +14,9 @@ from .models import SearchResult
 from .retrieval import retrieve, retrieve_batch
 from .text import query_terms, tokenize
 
+DEFAULT_CLI_PAGE_SIZE = 10
+DEFAULT_CLI_TOP_K = 100
+
 ResultLike = dict[str, int | float | str] | SearchResult
 
 
@@ -186,7 +189,7 @@ def explain_result(query: str, result: ResultLike) -> str:
     lines.append(f"  URL:              {_result_value(result, 'url', '')}")
     return "\n".join(lines)
 
-def interactive_search(index: str | Path, *, page_size: int = 10, top_k: int = 100) -> None:
+def interactive_search(index: str | Path, *, page_size: int = DEFAULT_CLI_PAGE_SIZE, top_k: int = DEFAULT_CLI_TOP_K) -> None:
     """Open the paged interactive search interface."""
     print(subheading("Tübingen Search"))
     print("Type a query, or 'quit'/'q'/'exit' to exit.")

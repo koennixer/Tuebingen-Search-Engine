@@ -35,6 +35,8 @@ from .text import (
 )
 from .vocabulary import load_vocabulary
 
+DEFAULT_RETRIEVAL_TOP_K = 100
+
 try:
     from sklearn.decomposition import TruncatedSVD
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -448,7 +450,7 @@ def retrieve(
     query: str,
     index: str | Path,
     *,
-    top_k: int = 100,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> list[dict[str, Any]]:
     """Return up to 100 ranked documents for one textual query."""
     terms = query_terms(query)
@@ -669,7 +671,7 @@ def retrieve_batch_list(
     queries: list[tuple[str, str]],
     index: str | Path,
     *,
-    top_k: int = 100,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run queries concurrently while preserving input query order."""
     if not queries:
@@ -689,7 +691,7 @@ def retrieve_batch(
     query_file: str | Path,
     index: str | Path,
     *,
-    top_k: int = 100,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run retrieval for every query in a batch file."""
     return retrieve_batch_list(

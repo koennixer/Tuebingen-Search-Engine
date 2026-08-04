@@ -14,6 +14,10 @@ from urllib.parse import urlparse
 
 from .intent import classify_document
 from .models import Document
+
+DEFAULT_MAX_CRAWL_RETRY_ATTEMPTS = 3
+DEFAULT_INDEX_PATH = ".index/tuebingen_index.sqlite3"
+
 from .text import normalize_for_matching, tokenize
 
 
@@ -430,7 +434,7 @@ def mark_frontier(
     conn.commit()
 
 
-def requeue_retryable_errors(conn: sqlite3.Connection, *, max_attempts: int = 3) -> int:
+def requeue_retryable_errors(conn: sqlite3.Connection, *, max_attempts: int = DEFAULT_MAX_CRAWL_RETRY_ATTEMPTS) -> int:
     """Move transient and now-fixed crawler failures back to the queue.
 
     Earlier crawler versions stored streaming timeouts and two extraction

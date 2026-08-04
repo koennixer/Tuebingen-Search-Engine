@@ -28,11 +28,10 @@ from .presentation import (
 )
 from .web import start_web_interface
 from .retrieval import retrieve
-from .storage import export_documents_jsonl, index_statistics
+from .storage import DEFAULT_INDEX_PATH, export_documents_jsonl, index_statistics
 from .vocabulary import DEFAULT_MIN_FREQUENCY, build_vocabulary, get_vocabulary_info
 
 
-DEFAULT_INDEX = "tuebingen_index.sqlite3"
 DEFAULT_MAX_PAGES = 50
 DEFAULT_SEEDS = [
     "https://www.tuebingen.de/en/",
@@ -63,7 +62,7 @@ DEFAULT_SEEDS = [
 class SearchShell:
     """Small persistent shell that avoids repeatedly typing long commands."""
 
-    def __init__(self, index: str | Path = DEFAULT_INDEX) -> None:
+    def __init__(self, index: str | Path = DEFAULT_INDEX_PATH) -> None:
         self.index = str(index)
 
     def run(self) -> None:
@@ -256,8 +255,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Tübingen search engine project")
     parser.add_argument(
         "--index",
-        default=DEFAULT_INDEX,
-        help=f"default SQLite index path for shell/search commands ({DEFAULT_INDEX})",
+        default=DEFAULT_INDEX_PATH,
+        help=f"default SQLite index path for shell/search commands ({DEFAULT_INDEX_PATH})",
     )
     subparsers = parser.add_subparsers(dest="command")
 

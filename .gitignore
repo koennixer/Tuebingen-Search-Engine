@@ -219,3 +219,11 @@ __marimo__/
 
 # Mac System Folder
 .DS_Store
+
+# System Artifacts
+.index/*.sqlite3-wal
+.index/*.sqlite3-shm
+
+# FIXME:
+.index
+.vocab

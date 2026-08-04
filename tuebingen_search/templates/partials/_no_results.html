@@ -1,0 +1,5 @@
+    {% if query and not batch_results and not results %}
+    <p class="no-results">
+        No results found for query: <strong><em>{{ query }}</em></strong>
+    </p>
+    {% endif %}

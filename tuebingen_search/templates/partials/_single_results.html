@@ -1,0 +1,22 @@
+    {% if results %}
+    <div class="results-header-container">
+        <h2>Results</h2>
+
+        <button type="button" class="secondary-btn toggle-scores-btn" onclick="toggleScores()">Show Scores</button>
+    </div>
+
+    {% for result in results %}
+    <div class="result-header">
+        <a class="result-title" href="{{result.url}}">{{result.title}}</a>
+        <span class="reading-time">⏱️ {{result.reading_time_mins}} min read</span>
+    </div>
+    <div class="score-metadata" style="display: none;">
+        <strong>Score:</strong> {{ "%.4f"|format(result.score) }} &nbsp;|&nbsp;
+        <strong>BM25:</strong> {{ "%.4f"|format(result.bm25_score) }} &nbsp;|&nbsp;
+        <strong>Expanded:</strong> {{ "%.4f"|format(result.expanded_score) }}
+    </div>
+    <div class="snippet-text">
+        {{result.snippet}}
+    </div>
+    {% endfor %}
+    {% endif %}

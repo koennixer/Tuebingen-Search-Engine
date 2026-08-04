@@ -1,0 +1,22 @@
+    <script>
+        const query = {{ query | tojson | safe }};
+        const queryWords = {{ highlight_terms | default([]) | tojson | safe }};
+        if (queryWords.length > 0) {
+            const escapedWords = queryWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const regex = new RegExp('\\b(' + escapedWords.join('|') + ')[a-z]*\\b', 'gi');
+            document.querySelectorAll('.snippet-text').forEach(el => {
+                el.innerHTML = el.innerHTML.replace(regex, '<strong>$1</strong>');
+            });
+        }
+
+        let scoresVisible = false;
+        function toggleScores() {
+            scoresVisible = !scoresVisible;
+            document.querySelectorAll('.score-metadata').forEach(el => {
+                el.style.display = scoresVisible ? 'block' : 'none';
+            });
+            document.querySelectorAll('.toggle-scores-btn').forEach(btn => {
+                btn.textContent = scoresVisible ? 'Hide Scores' : 'Show Scores';
+            });
+        }
+    </script>
