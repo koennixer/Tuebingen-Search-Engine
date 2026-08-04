@@ -1,0 +1,42 @@
+    <section class="heading">
+
+        <h1><img src="../static/pictures/TueSearch_Logo_1.png" alt="TüSearch" class="logo"></h1>
+        <h3>... Your Search Machine for everything Tübingen related</h3>
+
+        <form class="search-form" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="type" value="query">
+            <input type="hidden" name="show_scores" value="{{ '1' if show_scores else '0' }}">
+            <input type="text" name="query" id="search_query" placeholder="Search..." value="{{ query }}" autofocus>
+
+            <label for="batch_file" style="cursor:pointer; font-size:1.2em; padding: 0 5px;"
+                title="Upload Batch Queries File">&#x1F4E4;&#xFE0E;</label>
+            <input type="file" name="batch_file" id="batch_file" style="display:none;" accept=".tsv,.txt">
+            <div class="search-submit">
+                <button type="submit" id="search_button" name="button" value="search">Search</button>
+                <button type="submit" id="lucky_button" name="button" value="lucky">I feel lucky</button>
+            </div>
+        </form>
+
+        <script>
+            document.getElementById('batch_file').addEventListener('change', function (e) {
+                if (e.target.files.length > 0) {
+                    document.getElementById('search_query').value = "";
+                    document.getElementById('search_query').placeholder = e.target.files[0].name + " selected";
+                    document.getElementById('search_button').textContent = "Run Batch";
+                }
+            });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && document.getElementById('batch_file').files.length > 0) {
+                    e.preventDefault();
+                    document.querySelector('.search-form').submit();
+                }
+            });
+        </script>
+
+        {% if suggestion %}
+        <p class="suggestion">
+            Did you mean: <a href="/?q={{ suggestion }}">{{ suggestion }}</a>
+        </p>
+        {% endif %}
+    </section>

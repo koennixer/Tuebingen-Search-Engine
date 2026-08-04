@@ -28,10 +28,10 @@ from .presentation import (
 )
 from .web import start_web_interface
 from .retrieval import retrieve
-from .storage import export_documents_jsonl, index_statistics
+from .storage import DEFAULT_INDEX_PATH, export_documents_jsonl, index_statistics
+from .vocabulary import DEFAULT_MIN_FREQUENCY, build_vocabulary, get_vocabulary_info
 
 
-DEFAULT_INDEX = "tuebingen_index.sqlite3"
 DEFAULT_MAX_PAGES = 50
 DEFAULT_SEEDS = [
     "https://www.tuebingen.de/en/",
@@ -62,13 +62,13 @@ DEFAULT_SEEDS = [
 class SearchShell:
     """Small persistent shell that avoids repeatedly typing long commands."""
 
-    def __init__(self, index: str | Path = DEFAULT_INDEX) -> None:
+    def __init__(self, index: str | Path = DEFAULT_INDEX_PATH) -> None:
         self.index = str(index)
 
     def run(self) -> None:
         print(heading("Tübingen Search CLI"))
         print(table([("Current index", self.index)]))
-        print("Type 'help' for commands. Type a normal search query to search.")
+        print("Type 'help' or '?' for commands. Type your search query to search.")
 
         while True:
             try:
@@ -111,6 +111,8 @@ class SearchShell:
             interactive_search(self.index)
         elif command == "web":
             self.web(args)
+        elif command == "vocab":
+            self.vocab(args)
         else:
             self.query(line)
 
@@ -122,14 +124,20 @@ Commands
   crawl 500 --verbose                 crawl with detailed progress diagnostics
   crawl 500 --no-progress             crawl without a progress display
   crawl 500 --max-processed 3000      stop after too many filtered pages
+  crawl 500 --per-host-limit 100      avoid one website dominating a crawl run
+  crawl 500 --max-links-per-page 80   cap newly queued links per fetched page
   <your query>                        search directly, e.g. tübingen attractions
   query <your query>                  same as typing the query directly
   ui                                  open the paged search interface
   web                                 start the web search interface
-  batch <queries.tsv> <results.tsv>   write assignment evaluation output
+  batch <queries.tsv> <results.tsv>   batch querying with specified in-and output files
   stats                               show index statistics
+  vocab                               show custom dictionary metadata
+  vocab --refresh                     rebuild custom dictionary from corpus
+  vocab --min-frequency <N>           rebuild dictionary, discarding words occurring < N times
   index <path.sqlite3>                switch/create the active index file
-  quit                                exit
+  quit/q/exit                         exit
+  help                                show this page
 
 Examples
   crawl 500
@@ -203,20 +211,62 @@ Examples
             return
         start_web_interface(options.host, options.port, self.index)
 
+    def vocab(self, args: list[str]) -> None:
+        try:
+            options = parse_shell_vocab_args(args)
+        except ValueError as exc:
+            print(exc)
+            return
+
+        info = get_vocabulary_info(self.index)
+        
+        # If user did not provide --min-frequency but provided --refresh, use the last min_frequency
+        if options.min_frequency is None:
+            min_frequency = info.get("min_frequency", DEFAULT_MIN_FREQUENCY) if info else DEFAULT_MIN_FREQUENCY
+        else:
+            min_frequency = options.min_frequency
+
+        if options.refresh or options.min_frequency is not None:
+            build_vocabulary(self.index, min_frequency=min_frequency, refresh_counts=options.refresh)
+            print()
+            info = get_vocabulary_info(self.index)
+        if not info:
+            print("Vocabulary not built. Run 'vocab --refresh' to build it.")
+        else:
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(info.get("created_at", ""))
+                created_at_fmt = dt.strftime("%d %b %Y, %H:%M %Z")
+            except ValueError:
+                created_at_fmt = info.get("created_at", "")
+
+            print(heading("Vocabulary Summary"))
+            print(table([
+                ("Created At", created_at_fmt),
+                ("Min Frequency", str(info.get('min_frequency', DEFAULT_MIN_FREQUENCY))),
+                ("Vocabulary Size", f"{info.get('word_count', 0):,} words"),
+                ("SymSpell Vocabulary Size", f"{info.get('symspell_size', 0):,} entries"),
+                ("Generated From Data Sized", f"{info.get('data_size_bytes', 0) / 1024 / 1024:.2f} MB")
+            ], key_width=26))
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the top-level command parser."""
     parser = argparse.ArgumentParser(description="Tübingen search engine project")
     parser.add_argument(
         "--index",
-        default=DEFAULT_INDEX,
-        help=f"default SQLite index path for shell/search commands ({DEFAULT_INDEX})",
+        default=DEFAULT_INDEX_PATH,
+        help=f"default SQLite index path for shell/search commands ({DEFAULT_INDEX_PATH})",
     )
     subparsers = parser.add_subparsers(dest="command")
 
     web_parser = subparsers.add_parser("web", help="start the web search interface")
     web_parser.add_argument("--host", default="127.0.0.1", help="host to bind to")
     web_parser.add_argument("--port", type=int, default=5000, help="port to bind to")
+
+    vocab_parser = subparsers.add_parser("vocab", help="manage custom spell-checking vocabulary")
+    vocab_parser.add_argument("--refresh", action="store_true", help="rebuild dictionary from corpus")
+    vocab_parser.add_argument("--min-frequency", type=int, default=DEFAULT_MIN_FREQUENCY, help=f"Set the minimum occurrence frequency required for a word to be included in the spelling dictionary (default: {DEFAULT_MIN_FREQUENCY})")
 
     shell_parser = subparsers.add_parser("shell", help="open the friendly command shell")
     shell_parser.add_argument("index_override", nargs="?", help="optional SQLite index path")
@@ -314,6 +364,21 @@ def main(argv: list[str] | None = None) -> int:
         SearchShell(args.index_override or args.index).run()
         return 0
 
+    if args.command == "vocab":
+        shell = SearchShell(args.index)
+        
+        vocab_args = []
+        if args.refresh:
+            vocab_args.append("--refresh")
+        
+        info = get_vocabulary_info(args.index)
+        default_freq = info.get("min_frequency", DEFAULT_MIN_FREQUENCY) if info else DEFAULT_MIN_FREQUENCY
+        if args.min_frequency != default_freq:
+            vocab_args.extend(["--min-frequency", str(args.min_frequency)])
+            
+        shell.vocab(vocab_args)
+        return 0
+
     if args.command == "crawl":
         max_pages, seeds = normalize_crawl_targets(args.max_pages, args.seeds)
         print(heading("Crawl"))
@@ -391,6 +456,16 @@ def parse_shell_web_args(args: list[str]) -> argparse.Namespace:
         return parser.parse_args(args)
     except SystemExit as exc:
         raise ValueError("Use: web [--host IP] [--port PORT]") from exc
+
+
+def parse_shell_vocab_args(args: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="vocab", add_help=False)
+    parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--min-frequency", type=int, default=None)
+    try:
+        return parser.parse_args(args)
+    except SystemExit as exc:
+        raise ValueError("Use: vocab [--refresh] [--min-frequency N]") from exc
 
 
 def parse_shell_crawl_args(args: list[str]) -> argparse.Namespace:

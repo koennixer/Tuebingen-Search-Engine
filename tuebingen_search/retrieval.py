@@ -33,6 +33,9 @@ from .text import (
     snippet,
     tokenize,
 )
+from .vocabulary import load_vocabulary
+
+DEFAULT_RETRIEVAL_TOP_K = 100
 
 try:
     from sklearn.decomposition import TruncatedSVD
@@ -468,7 +471,7 @@ def retrieve(
     query: str,
     index: str | Path,
     *,
-    top_k: int = 100,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> list[dict[str, Any]]:
     """Return up to 100 ranked documents for one textual query."""
     terms = query_terms(query)
@@ -638,6 +641,18 @@ def retrieve(
         return [result.as_dict() for result in results]
     finally:
         conn.close()
+def suggest_correction(query: str, index: str | Path) -> str | None:
+    """Return a spelling correction suggestion if one is found, else None."""
+    sym_spell = load_vocabulary(index)
+    if not sym_spell:
+        return None
+    query_lower = query.lower()
+    suggestions = sym_spell.lookup_compound(query_lower, max_edit_distance=2)
+    if suggestions:
+        best = suggestions[0].term
+        if best != query_lower:
+            return best
+    return None
 
 
 def load_query_file(path: str | Path) -> list[tuple[str, str]]:
@@ -677,7 +692,7 @@ def retrieve_batch_list(
     queries: list[tuple[str, str]],
     index: str | Path,
     *,
-    top_k: int = 100,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run queries concurrently while preserving input query order."""
     if not queries:
@@ -697,7 +712,7 @@ def retrieve_batch(
     query_file: str | Path,
     index: str | Path,
     *,
-    top_k: int = 100,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run retrieval for every query in a batch file."""
     return retrieve_batch_list(

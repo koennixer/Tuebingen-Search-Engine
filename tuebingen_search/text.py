@@ -6,6 +6,8 @@ import re
 import unicodedata
 from collections import Counter
 
+DEFAULT_SNIPPET_LENGTH_CHARS = 260
+
 try:
     from langdetect import DetectorFactory, LangDetectException, detect
 except ImportError:  # The stop-word fallback keeps the core project usable.
@@ -193,7 +195,7 @@ def is_tuebingen_related(url: str, title: str, text: str) -> bool:
     return tuebingen_relevance_score(url, title, text) >= 2.0
 
 
-def snippet(text: str, terms: list[str], *, length: int = 260) -> str:
+def snippet(text: str, terms: list[str], *, length: int = DEFAULT_SNIPPET_LENGTH_CHARS) -> str:
     """Choose a short snippet that contains at least one query term if possible."""
     if not text:
         return ""

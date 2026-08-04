@@ -1,0 +1,40 @@
+    {% if batch_results %}
+    <div class="batch-results-header">
+        <h2>Batch Results</h2>
+
+        <div class="batch-actions">
+            <button type="button" class="secondary-btn toggle-scores-btn" onclick="toggleScores()">Show Scores</button>
+
+            <form class="scores-form" method="POST" action="/download">
+                <input type="hidden" name="tsv_data" value="{{ tsv_output }}">
+                <button type="submit" class="secondary-btn">Download TSV</button>
+            </form>
+        </div>
+    </div>
+
+    <div>
+        {% for query_id, query_text in queries %}
+        {% set query_results = batch_results.get(query_id, []) %}
+        <details style="margin-bottom: 10px;">
+            <summary style="cursor: pointer; font-weight: bold;">Query: {{query_id}} - {{query_text}}
+                ({{query_results|length}} results)</summary>
+            <div style="margin-top: 10px; margin-left: 15px;">
+                {% for result in query_results %}
+                <div class="result-header">
+                    <a class="result-title" href="{{result.url}}">{{result.title}}</a>
+                    <span class="reading-time">⏱️ {{result.reading_time_mins}} min read</span>
+                </div>
+                <div class="score-metadata" style="display: none;">
+                    <strong>Score:</strong> {{ "%.4f"|format(result.score) }} &nbsp;|&nbsp;
+                    <strong>BM25:</strong> {{ "%.4f"|format(result.bm25_score) }} &nbsp;|&nbsp;
+                    <strong>Expanded:</strong> {{ "%.4f"|format(result.expanded_score) }}
+                </div>
+                <div class="snippet-text">
+                    {{result.snippet}}
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+    {% endif %}
