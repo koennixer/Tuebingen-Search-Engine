@@ -108,7 +108,7 @@ def build_vocabulary(index_path: str | Path, min_frequency: int = DEFAULT_MIN_FR
         if count >= min_frequency and len(word) >= DEFAULT_MIN_WORD_LENGTH
     }
 
-    sym_spell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+    sym_spell = SymSpell(max_dictionary_edit_distance=3, prefix_length=7)
     
     total_words = len(filtered_counts)
     print()
