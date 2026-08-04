@@ -270,7 +270,7 @@ def _extract_document_without_bs4(
     parser = _FallbackHTMLParser()
     parser.feed(html)
     links: dict[str, ExtractedLink] = {}
-    page_base = parser.base_href or url
+    page_base = urljoin(url, parser.base_href.strip()) if parser.base_href else url
     for raw_url, anchor, hreflang in parser.links:
         target = canonicalize_url(raw_url, base_url=page_base)
         if not target:
@@ -403,7 +403,7 @@ def extract_document(
         )
     soup = BeautifulSoup(html, "html.parser")
     base_tag = soup.find("base", href=True)
-    page_base = str(base_tag["href"]).strip() if base_tag else url
+    page_base = urljoin(url, str(base_tag["href"]).strip()) if base_tag else url
     title_tag = soup.find("meta", property="og:title")
     title = (
         str(_tag_attribute(title_tag, "content", "")).strip()

@@ -107,19 +107,23 @@ def _singularize(token: str) -> str:
     """Apply conservative plural conflation without an NLP dependency."""
     if token in ENGLISH_STOPWORDS or token in NORMALIZED_GERMAN_STOPWORDS:
         return token
+    singular = token
     if token in IRREGULAR_PLURALS:
-        return IRREGULAR_PLURALS[token]
-    if len(token) > 5 and token.endswith("ies"):
-        return token[:-3] + "y"
-    if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes")):
-        return token[:-2]
-    if (
+        singular = IRREGULAR_PLURALS[token]
+    elif len(token) > 5 and token.endswith("ies"):
+        singular = token[:-3] + "y"
+    elif len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes")):
+        singular = token[:-2]
+    elif (
         len(token) > 4
         and token.endswith("s")
         and not token.endswith(("ss", "us", "is", "ous", "as", "os", "ys"))
     ):
-        return token[:-1]
-    return token
+        singular = token[:-1]
+
+    if singular != token and (singular in ENGLISH_STOPWORDS or singular in NORMALIZED_GERMAN_STOPWORDS):
+        return token
+    return singular
 
 
 
