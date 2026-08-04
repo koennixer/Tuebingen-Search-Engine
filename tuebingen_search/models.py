@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,9 @@ class Document:
     fetched_at: str
     content_type: str
     status_code: int
+    canonical_url: str = ""
+    description: str = ""
+    language: str = ""
 
 
 @dataclass(frozen=True)
@@ -30,8 +34,18 @@ class SearchResult:
     snippet: str
     bm25_score: float
     expanded_score: float
+    semantic_score: float = 0.0
+    authority_score: float = 0.0
+    intent: str = "general"
+    intent_label: str = "General Tübingen"
+    source_domain: str = ""
+    matched_terms: tuple[str, ...] = ()
+    expansion_terms: tuple[str, ...] = ()
+    score_components: dict[str, float] = field(default_factory=dict)
+    why: str = ""
+    reading_time_mins: int = 1
 
-    def as_dict(self) -> dict[str, int | float | str]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "rank": self.rank,
             "doc_id": self.doc_id,
@@ -39,6 +53,16 @@ class SearchResult:
             "title": self.title,
             "score": self.score,
             "snippet": self.snippet,
+            "reading_time_mins": self.reading_time_mins,
             "bm25_score": self.bm25_score,
             "expanded_score": self.expanded_score,
+            "semantic_score": self.semantic_score,
+            "authority_score": self.authority_score,
+            "intent": self.intent,
+            "intent_label": self.intent_label,
+            "source_domain": self.source_domain,
+            "matched_terms": list(self.matched_terms),
+            "expansion_terms": list(self.expansion_terms),
+            "score_components": dict(self.score_components),
+            "why": self.why,
         }

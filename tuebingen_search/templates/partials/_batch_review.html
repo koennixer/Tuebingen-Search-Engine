@@ -1,0 +1,61 @@
+    {% if batch_typos %}
+    <div class="batch-typos-container">
+        <h2>Did you mean?</h2>
+        <p>We found potential typos in your batch queries. Review and edit the suggested corrections below, then submit
+            to proceed.</p>
+
+        <form method="POST" action="/" class="batch-typo-form">
+            {% for query_id, query_text in queries %}
+            <input type="hidden" name="batch_query_ids" value="{{ query_id }}">
+            <input type="hidden" name="batch_query_texts" value="{{ query_text }}">
+            {% endfor %}
+            <input type="hidden" name="batch_review_submitted" value="1">
+
+            <table class="batch-typo-table">
+                <thead>
+                    <tr>
+                        <th>Query ID</th>
+                        <th>Query</th>
+                        <th>Correction</th>
+                        <th class="ignore-col">Ignore</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for query_id, typo_data in batch_typos.items() %}
+                    <tr>
+                        <td><strong>{{ query_id }}</strong></td>
+                        <td>{{ typo_data.original }}</td>
+                        <td>
+                            <input type="text" name="correction_{{ query_id }}" value="{{ typo_data.suggestion }}">
+                        </td>
+                        <td class="ignore-col">
+                            <input type="checkbox" name="keep_original_{{ query_id }}" value="1"
+                                class="ignore-checkbox">
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <div class="batch-typo-footer">
+                <label>
+                    <input type="checkbox" name="keep_all_original" value="1" id="ignore_all_checkbox"> Ignore All
+                </label>
+                <button type="submit">Submit Batch</button>
+            </div>
+            <script>
+                document.getElementById('ignore_all_checkbox').addEventListener('change', function (e) {
+                    const checkboxes = document.querySelectorAll('.ignore-checkbox');
+                    checkboxes.forEach(cb => cb.checked = e.target.checked);
+                });
+
+                document.querySelectorAll('.ignore-checkbox').forEach(cb => {
+                    cb.addEventListener('change', function () {
+                        const allChecked = Array.from(document.querySelectorAll('.ignore-checkbox')).every(c => c.checked);
+                        document.getElementById('ignore_all_checkbox').checked = allChecked;
+                    });
+                });
+            </script>
+        </form>
+    </div>
+    {% endif %}
