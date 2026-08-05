@@ -9,13 +9,14 @@ No retrieval-trained model or dedicated search toolkit is used.
 from __future__ import annotations
 
 import math
+import re
 import sqlite3
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import islice
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .intent import (
     infer_query_intents,
@@ -54,6 +55,13 @@ RM3_FEEDBACK_DOCS = 10
 RM3_EXPANSION_TERMS = 12
 RESULT_POOL_SIZE = 750
 SEMANTIC_RERANK_POOL_SIZE = 250
+NEAR_DUPLICATE_URL_SIMILARITY = 0.80
+NEAR_DUPLICATE_TITLE_SIMILARITY = 0.80
+NEAR_DUPLICATE_CONTENT_SIMILARITY = 0.82
+NEAR_DUPLICATE_TEXT_LIMIT = 12_000
+
+
+_URL_NUMBER_RE = re.compile(r"\d+")
 
 
 def _batched(iterable: Iterable[object], size: int):
@@ -327,6 +335,131 @@ def _normalize_score_map(scores: dict[int, float]) -> dict[int, float]:
     }
 
 
+def _stable_tokens(text: str) -> tuple[str, ...]:
+    """Return useful words while ignoring dates and other volatile numbers."""
+    stopwords = ENGLISH_STOPWORDS | NORMALIZED_GERMAN_STOPWORDS
+    return tuple(
+        token
+        for token in tokenize(text)
+        if len(token) > 1
+        and token not in stopwords
+        and not any(character.isdigit() for character in token)
+    )
+
+
+def _token_shingles(
+    tokens: tuple[str, ...], size: int = 3
+) -> frozenset[int]:
+    """Represent text with word shingles for an order-aware similarity check."""
+    if len(tokens) < size:
+        return frozenset(hash((token,)) for token in tokens)
+    return frozenset(
+        hash(tokens[index : index + size])
+        for index in range(len(tokens) - size + 1)
+    )
+
+
+def _jaccard(left: frozenset[Any], right: frozenset[Any]) -> float:
+    """Return Jaccard similarity without treating two empty sets as a match."""
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _near_duplicate_signature(document: dict[str, Any]) -> dict[str, Any]:
+    """Build the URL and text features used to identify page variants."""
+    raw_url = str(document["canonical_url"] or document["url"])
+    parsed = urlparse(raw_url)
+    host = (parsed.hostname or parsed.netloc).lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    decoded_path = unquote(parsed.path)
+    normalized_path = normalize_for_matching(decoded_path).strip("/")
+    path_template = _URL_NUMBER_RE.sub("{number}", normalized_path)
+    path_tokens = frozenset(_stable_tokens(decoded_path))
+    query_suffix = f"?{parsed.query}" if parsed.query else ""
+    url_key = f"{host}/{normalized_path.rstrip('/')}{query_suffix}"
+
+    title_tokens = _stable_tokens(str(document["title"]))
+    comparison_text = " ".join(
+        [
+            str(document["title"]),
+            str(document["description"]),
+            str(document["text"])[:NEAR_DUPLICATE_TEXT_LIMIT],
+        ]
+    )
+    content_tokens = _stable_tokens(comparison_text)
+    return {
+        "host": host,
+        "url_key": url_key,
+        "path_template": path_template,
+        "path_tokens": path_tokens,
+        "title_tokens": frozenset(title_tokens),
+        "content_shingles": _token_shingles(content_tokens),
+    }
+
+
+def _signatures_are_near_duplicates(
+    left: dict[str, Any], right: dict[str, Any]
+) -> bool:
+    """Require matching hosts, similar URL structure, and very similar text."""
+    if not left["host"] or left["host"] != right["host"]:
+        return False
+    if left["url_key"] == right["url_key"]:
+        return True
+
+    same_template = bool(left["path_template"]) and (
+        left["path_template"] == right["path_template"]
+    )
+    url_similarity = _jaccard(left["path_tokens"], right["path_tokens"])
+    if not same_template and url_similarity < NEAR_DUPLICATE_URL_SIMILARITY:
+        return False
+
+    title_similarity = _jaccard(left["title_tokens"], right["title_tokens"])
+    if title_similarity < NEAR_DUPLICATE_TITLE_SIMILARITY:
+        return False
+
+    content_similarity = _jaccard(
+        left["content_shingles"], right["content_shingles"]
+    )
+    return content_similarity >= NEAR_DUPLICATE_CONTENT_SIMILARITY
+
+
+def _deduplicate_candidates(
+    scores: dict[int, float], metadata: dict[int, dict[str, Any]]
+) -> dict[int, float]:
+    """Keep the best-scoring representative of each near-duplicate group."""
+    accepted: list[int] = []
+    accepted_by_host: dict[str, list[int]] = {}
+    accepted_fingerprints: set[str] = set()
+    signatures = {
+        doc_id: _near_duplicate_signature(metadata[doc_id])
+        for doc_id in scores
+    }
+
+    for doc_id in sorted(scores, key=lambda item: (-scores[item], item)):
+        document = metadata[doc_id]
+        fingerprint = str(document["content_fingerprint"])
+        if fingerprint and fingerprint in accepted_fingerprints:
+            continue
+
+        signature = signatures[doc_id]
+        host_matches = accepted_by_host.get(str(signature["host"]), [])
+        if any(
+            _signatures_are_near_duplicates(signature, signatures[other_id])
+            for other_id in host_matches
+        ):
+            continue
+
+        accepted.append(doc_id)
+        accepted_by_host.setdefault(str(signature["host"]), []).append(doc_id)
+        if fingerprint:
+            accepted_fingerprints.add(fingerprint)
+
+    return {doc_id: scores[doc_id] for doc_id in accepted}
+
+
 def _latent_semantic_scores(
     query: str,
     candidate_ids: list[int],
@@ -548,6 +681,7 @@ def retrieve(
                 + 0.02 * components["authority"]
             )
 
+        final_scores = _deduplicate_candidates(final_scores, metadata)
         selected = _diversified_order(
             final_scores, metadata, top_k=top_k
         )
@@ -620,6 +754,8 @@ def retrieve(
         return [result.as_dict() for result in results]
     finally:
         conn.close()
+
+
 def suggest_correction(query: str, index: str | Path) -> str | None:
     """Return a spelling correction suggestion if one is found, else None."""
     sym_spell = load_vocabulary(index)

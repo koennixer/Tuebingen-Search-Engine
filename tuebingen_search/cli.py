@@ -56,8 +56,9 @@ DEFAULT_SEEDS = [
     "https://www.travelocity.com/Things-To-Do-In-Tuebingen.d181220.Travel-Guide-Activities",
     "https://www.speisekarte.de/t%C3%BCbingen/restaurants",
     "https://www.tuebingen-info.de/de/mein-aufenthalt/uebernachten",
-    ]
+]
 
+class SearchShell:
     """Small persistent shell that avoids repeatedly typing long commands."""
 
     def __init__(self, index: str | Path = DEFAULT_INDEX_PATH) -> None:
@@ -217,7 +218,7 @@ Examples
             return
 
         info = get_vocabulary_info(self.index)
-        
+
         # If user did not provide --min-frequency but provided --refresh, use the last min_frequency
         if options.min_frequency is None:
             min_frequency = info.get("min_frequency", DEFAULT_MIN_FREQUENCY) if info else DEFAULT_MIN_FREQUENCY
@@ -364,14 +365,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "vocab":
         shell = SearchShell(args.index)
-        
+
         vocab_args = []
         if args.refresh:
             vocab_args.append("--refresh")
-        
+
         if args.min_frequency is not None:
             vocab_args.extend(["--min-frequency", str(args.min_frequency)])
-            
+
         shell.vocab(vocab_args)
         return 0
 
