@@ -5,14 +5,8 @@ body {
     padding: 20px;
 }
 
-/*FIXME make background picture integration look nice or remove it entirely*/
 .heading {
     margin-bottom: 3rem;
-    /* height: auto;
-    background-image: url("pictures/Neckarfront_Tuebingen_August_2013_cropped.jpg");
-    background-repeat: no-repeat;
-    background-position: center bottom;
-    background-size: cover; */
 }
 
 .logo {
