@@ -2,14 +2,6 @@
 
 Python implementation for the Modern Search Engines project:
 
-<!-- FIXME is this list complete? -->
-
-- restartable web crawler for English Tübingen-related pages
-- local SQLite document store and inverted index
-- BM25 retrieval with pseudo-relevance-feedback expansion
-- terminal result presentation with snippets, facets, explanations, and batch output
-- web interface for searching and batch querying
-
 ## Install
 
 ```bash
@@ -145,29 +137,9 @@ python3 tuebingen_search_engine.py search
 python3 tuebingen_search_engine.py batch queries.tsv results.tsv
 ```
 
-<!-- FIXME do we need this extra explanation, or is the one for index above sufficient and we can just append this as an additional command -->
 The default index file is `.index/tuebingen_index.sqlite3`. To use another one:
 
 ```bash
 python3 tuebingen_search_engine.py --index my_index.sqlite3
 python3 tuebingen_search_engine.py crawl --index my_index.sqlite3 --max-pages 500
 ```
-
-## Python API
-
-```python
-from tuebingen_search import crawl, retrieve, retrieve_batch, batch
-
-crawl(["https://www.tuebingen.de/en/"], ".index/tuebingen_index.sqlite3", max_pages=500)
-results = retrieve("tübingen attractions", ".index/tuebingen_index.sqlite3")
-batch({"1": results}, "results.tsv")
-```
-
-## Ranking
-<!-- FIXME is this still the case? Should there be more info on ranking here? -->
-
-The first stage is a self-implemented BM25 scorer. The second stage applies
-pseudo-relevance feedback query expansion. If `scikit-learn` is installed, the
-top candidate pool is also reranked with a TF-IDF cosine-similarity signal.
-The system still works without scikit-learn; it simply falls back to the
-classical BM25 plus feedback pipeline.

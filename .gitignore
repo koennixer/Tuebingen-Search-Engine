@@ -223,7 +223,3 @@ __marimo__/
 # System Artifacts
 .index/*.sqlite3-wal
 .index/*.sqlite3-shm
-
-# FIXME:
-.index
-.vocab
